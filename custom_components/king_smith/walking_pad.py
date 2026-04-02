@@ -169,7 +169,10 @@ class WalkingPadApi:
         """Disconnect the device."""
         lock = self._begin_cmd()
         async with lock:
-            await self._ctrl.disconnect()
+            try:
+                await self._ctrl.disconnect()
+            except Exception:
+                pass
             self._connected = False
             await self._end_cmd()
 
@@ -232,7 +235,7 @@ class WalkingPadApi:
             try:
                 await self.connect()
             except Exception as e:
-                _LOGGER.warn("failed to connect to Walking Pad: %s", e)
+                _LOGGER.debug("Walking Pad is offline or not connecting: %s", e)
             return
 
         # Grab the lock so we don't run while another command is running
@@ -243,7 +246,10 @@ class WalkingPadApi:
                 self._status_lock = False
                 await self._ctrl.ask_stats()
             except Exception as e:
-                _LOGGER.warn("failed to request status update from Walking Pad: %s", e)
-                await self._ctrl.disconnect()
+                _LOGGER.debug("Walking Pad is not responding (disconnecting): %s", e)
+                try:
+                    await self._ctrl.disconnect()
+                except Exception:
+                    pass
                 self._connected = False
                 # Skip callback so we don't reset debouncer
