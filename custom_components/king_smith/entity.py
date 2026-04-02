@@ -30,10 +30,6 @@ class WalkingPadEntity(CoordinatorEntity[WalkingPadCoordinator]):
     def _handle_coordinator_update(self) -> None:
         self.async_write_ha_state()
 
-    async def async_update(self) -> None:
-        """Handle an update."""
-        await self._walking_pad_api.update_state()
-
     @property
     def device_info(self) -> dict[str, Any]:
         """Return the device info."""
@@ -44,11 +40,6 @@ class WalkingPadEntity(CoordinatorEntity[WalkingPadCoordinator]):
         }
 
         return prop
-
-    @property
-    def should_poll(self):
-        """Should poll."""
-        return True
 
     @property
     def available(self) -> bool:

@@ -24,6 +24,7 @@ class WalkingPadApi:
         self._callbacks = []
         self._status_lock = False
         self._last_cmd_time = time.time()
+        self._cmd_lock = asyncio.Lock()
 
         self._connected = False
         self._moving = False
@@ -45,7 +46,7 @@ class WalkingPadApi:
 
     def _begin_cmd(self) -> asyncio.Lock:
         self._status_lock = True
-        return asyncio.Lock()
+        return self._cmd_lock
 
     async def _end_cmd(self):
         await asyncio.sleep(0.75)

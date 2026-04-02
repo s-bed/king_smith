@@ -1,5 +1,5 @@
 """The Walking Pad Coordinator."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import time
 
@@ -11,7 +11,7 @@ from homeassistant.const import (
 
 from homeassistant.core import CALLBACK_TYPE, HassJob, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from ph4_walkingpad.pad import WalkingPadCurStatus
 
@@ -38,6 +38,7 @@ class WalkingPadCoordinator(DataUpdateCoordinator[None]):
             hass,
             _LOGGER,
             name=DOMAIN,
+            update_interval=timedelta(seconds=5),
         )
         self._device_id = device_id
         self._last_status = None
@@ -131,3 +132,10 @@ class WalkingPadCoordinator(DataUpdateCoordinator[None]):
             self._debounce_cancel()
             self._debounce_cancel = None
         await super().async_shutdown()
+
+    async def _async_update_data(self) -> None:
+        """Fetch data from Walking Pad centrally."""
+        try:
+            await self._walking_pad_api.update_state()
+        except Exception as err:
+            raise UpdateFailed(f"Error communicating with Walking Pad: {err}")
