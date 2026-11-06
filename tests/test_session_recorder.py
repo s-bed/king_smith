@@ -193,6 +193,45 @@ class SessionRecorderTests(unittest.TestCase):
         self.assertTrue(self.recorder.active["partial"])
         self.assertIn("counter_jump", self.recorder.active["quality_flags"])
 
+    def test_clustered_packets_use_device_duration_for_cadence(self):
+        """A one-second device tick received 0.1 seconds later stays sixty steps/min."""
+        self.recorder.receive(sample(100, 500, 800, 1000, 1))
+        self.recorder.receive(sample(100.1, 501, 801, 1001, 1))
+        self.assertEqual(self.recorder.active["samples"][-1]["cadence_spm"], 60)
+        self.assertLessEqual(self.recorder.active["moving_seconds"], 0.1)
+        # A subsequent observation supplies enough wall-time budget to preserve
+        # the previously clipped source second even though its counter repeats.
+        self.recorder.receive(sample(101.1, 501, 801, 1001, 1))
+        self.assertEqual(self.recorder.active["moving_seconds"], 1)
+        self.recorder.receive(sample(101.2, 501, 801, 1001))
+        result = self.recorder.expire(221.2)[0]
+        self.assertEqual(result["moving_seconds"], 1)
+        self.assertNotIn("_moving_seconds_raw", result)
+
+    def test_receipt_jitter_does_not_systematically_lose_device_seconds(self):
+        """Early packets can recover clipped fractions when later packets arrive."""
+        self.recorder.receive(sample(0))
+        self.recorder.receive(sample(5.1, 5, 5, 5, 1))
+        self.recorder.receive(sample(9.9, 10, 10, 10, 1))
+        self.assertLessEqual(
+            self.recorder.active["moving_seconds"],
+            self.recorder.active["elapsed_seconds"],
+        )
+        self.recorder.receive(sample(15.1, 15, 15, 15, 1))
+        self.recorder.receive(sample(16.1, 16, 16, 16))
+        result = self.recorder.expire(136.1)[0]
+        self.assertAlmostEqual(result["moving_seconds"], 16)
+        self.assertAlmostEqual(result["elapsed_seconds"], 16)
+
+    def test_quantized_duration_credit_survives_a_checkpoint(self):
+        """Restart recovery retains raw counter seconds awaiting wall-time budget."""
+        self.recorder.receive(sample(100, 500, 800, 1000, 1))
+        self.recorder.receive(sample(100.1, 501, 801, 1001, 1))
+        checkpoint = json.loads(json.dumps(self.recorder.to_dict()))
+        restored = SessionRecorder("entry", "device", "Desk treadmill", checkpoint)
+        restored.receive(sample(101.1, 501, 801, 1001, 1))
+        self.assertEqual(restored.active["moving_seconds"], 1)
+
     def test_multiple_pads_and_registry_updates_are_independent(self):
         """Only the intended recorder changes, and final metadata stays current."""
         other = SessionRecorder("second", "other_device", "Other treadmill")

@@ -5,7 +5,6 @@ from datetime import timedelta
 
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.components import bluetooth
 from homeassistant.const import Platform, CONF_NAME, CONF_MAC, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -50,6 +49,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Walkingpad from a config entry."""
+    from homeassistant.components import bluetooth
+
     hass.data.setdefault(DOMAIN, {})
     address = entry.data.get(CONF_MAC)
 
@@ -89,6 +90,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    from homeassistant.components import bluetooth
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         data = hass.data[DOMAIN].pop(entry.entry_id)
         data["remove_snapshot"]()

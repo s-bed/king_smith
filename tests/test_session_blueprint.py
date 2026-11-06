@@ -1,10 +1,12 @@
 """Validate the review blueprint's routing and restart-safe notification logic."""
 
 import ast
+import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 
@@ -223,6 +225,20 @@ class SessionBlueprintTests(unittest.TestCase):
         variables["saved_sessions"] = [self.session(), self.session("sent"), self.session("discarded")]
         self.assertEqual(len(self.render(template, variables)), 1)
 
+    def test_stale_event_payload_uses_the_current_saved_status(self):
+        """A delayed ready/update event cannot recreate a prompt after upload."""
+        trigger = SimpleNamespace(
+            id="session_ready",
+            event=SimpleNamespace(data=self.session("awaiting_review")),
+        )
+        variables = self.variables(trigger)
+        variables["saved_sessions"] = [self.session("sent")]
+        template = self.blueprint["action"][-2]["variables"]["notification_sessions"]
+        candidates = self.render(template, variables)
+        self.assertEqual(len(candidates), 1)
+        variables["session"] = candidates[0]
+        self.assertTrue(self.render(self.notification_branches()[0]["conditions"], variables))
+
     def test_service_documentation_matches_public_contract(self):
         """Expose identifiers rather than arbitrary paths for review actions."""
         services = yaml.safe_load(
@@ -234,18 +250,31 @@ class SessionBlueprintTests(unittest.TestCase):
         self.assertFalse(upload["retry"]["default"])
         self.assertIn("keep the recording locally", services["discard_session"]["description"])
 
-    @unittest.skipUnless(importlib.util.find_spec("homeassistant"), "Home Assistant is not installed")
+    @unittest.skipUnless(
+        importlib.util.find_spec("homeassistant") and importlib.util.find_spec("probatio"),
+        "Real schema validation runs against current Home Assistant in the Linux CI job",
+    )
     def test_home_assistant_schema(self):
         """Use actual HA blueprint/script schemas when running Linux HA CI."""
-        from homeassistant.components.blueprint.schemas import BLUEPRINT_SCHEMA
-        from homeassistant.helpers import config_validation as cv
-        from homeassistant.util import yaml as yaml_util
+        async def validate_blueprint():
+            """Validate templates in the event-loop context required by HA."""
+            from homeassistant.core import HomeAssistant
+            from homeassistant.components.blueprint.schemas import BLUEPRINT_SCHEMA
+            from homeassistant.helpers import config_validation as cv
+            from homeassistant.util import yaml as yaml_util
 
-        data = yaml_util.load_yaml(str(BLUEPRINT_PATH))
-        BLUEPRINT_SCHEMA(data)
-        substituted = yaml_util.substitute(deepcopy(data), self.inputs)
-        cv.TRIGGER_SCHEMA(substituted["trigger"])
-        cv.SCRIPT_SCHEMA(substituted["action"])
+            with tempfile.TemporaryDirectory() as config_directory:
+                hass = HomeAssistant(config_directory)
+                try:
+                    data = yaml_util.load_yaml(str(BLUEPRINT_PATH))
+                    BLUEPRINT_SCHEMA(data)
+                    substituted = yaml_util.substitute(deepcopy(data), self.inputs)
+                    cv.TRIGGER_SCHEMA(substituted["trigger"])
+                    cv.SCRIPT_SCHEMA(substituted["action"])
+                finally:
+                    await hass.async_stop(force=True)
+
+        asyncio.run(validate_blueprint())
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 """Public session actions used by automations and the review blueprint."""
-import voluptuous as vol
 
 from homeassistant.core import SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
+from .schema_compat import vol
 from .session_manager import SessionError
 
 

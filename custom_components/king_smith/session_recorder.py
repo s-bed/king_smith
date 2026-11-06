@@ -171,6 +171,7 @@ class SessionRecorder:
             "end_time": sample.timestamp,
             "elapsed_seconds": duration,
             "moving_seconds": 0.0,
+            "_moving_seconds_raw": 0.0,
             "distance_m": 0.0,
             "steps": 0,
             "partial": not known_start,
@@ -195,7 +196,8 @@ class SessionRecorder:
         if self.active is None:
             return
         interval = sample.timestamp - previous.timestamp
-        duration = float(self._counter_delta(sample.duration_s, previous.duration_s))
+        source_duration = float(self._counter_delta(sample.duration_s, previous.duration_s))
+        duration = source_duration
         distance = self._counter_delta(sample.distance_m, previous.distance_m)
         steps = int(self._counter_delta(sample.steps, previous.steps))
         reset = (
@@ -207,11 +209,19 @@ class SessionRecorder:
             self._flag("counter_reset", partial=self._paused_at is None and not starting)
         if duration > interval + 1:
             self._flag("counter_jump", partial=True)
-        duration = min(duration, interval)
-        self.active["moving_seconds"] += duration
+            duration = interval
+        # Device duration is quantized to seconds, while packet reception can
+        # jitter or bunch. Preserve credible counter seconds across samples;
+        # clipping each interval would permanently discard the fractional slack
+        # that a later observation can make available again.
+        recorded = self.active.get("_moving_seconds_raw", self.active["moving_seconds"])
+        self.active["_moving_seconds_raw"] = recorded + duration
+        elapsed = sample.timestamp - self.active["start_time"]
+        self.active["moving_seconds"] = min(self.active["_moving_seconds_raw"], elapsed)
         self.active["distance_m"] += distance
         self.active["steps"] += steps
-        self.active["_sample_cadence"] = steps * 60 / duration if duration else 0.0
+        # Cadence follows the device clock, never the shorter receipt interval.
+        self.active["_sample_cadence"] = steps * 60 / source_duration if source_duration else 0.0
         self.active["end_time"] = sample.timestamp
         self.active["elapsed_seconds"] = sample.timestamp - self.active["start_time"]
 
@@ -250,9 +260,10 @@ class SessionRecorder:
         self._timer("stop", end_time)
         session = deepcopy(self.active)
         session.pop("_sample_cadence", None)
+        raw_duration = session.pop("_moving_seconds_raw", session["moving_seconds"])
         session["end_time"] = end_time
         session["elapsed_seconds"] = max(0.0, end_time - session["start_time"])
-        session["moving_seconds"] = min(session["moving_seconds"], session["elapsed_seconds"])
+        session["moving_seconds"] = min(raw_duration, session["elapsed_seconds"])
         session["device_id"] = self.device_id
         session["name"] = self.name
         session["samples"] = [sample for sample in session["samples"] if sample["timestamp"] <= end_time]

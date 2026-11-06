@@ -1,14 +1,18 @@
 """Config flow for Walkingpad."""
-from typing import Any
+from __future__ import annotations
 
-import voluptuous as vol
+from typing import Any, TYPE_CHECKING
+
 from homeassistant import config_entries
-from homeassistant.components import bluetooth
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import device_registry
 
 from .const import DOMAIN
+from .schema_compat import vol
+
+if TYPE_CHECKING:
+    from homeassistant.components import bluetooth
 
 
 class WalkingpadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):

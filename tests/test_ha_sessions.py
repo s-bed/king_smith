@@ -9,7 +9,10 @@ from types import SimpleNamespace
 import unittest
 
 
-HAS_HOME_ASSISTANT = importlib.util.find_spec("homeassistant") is not None
+HAS_HOME_ASSISTANT = (
+    importlib.util.find_spec("homeassistant") is not None
+    and importlib.util.find_spec("probatio") is not None
+)
 if HAS_HOME_ASSISTANT:
     import probatio
 
@@ -23,7 +26,7 @@ if HAS_HOME_ASSISTANT:
     from custom_components.king_smith.session_services import register_session_services
 
 
-@unittest.skipUnless(HAS_HOME_ASSISTANT, "Requires the Linux Home Assistant CI environment")
+@unittest.skipUnless(HAS_HOME_ASSISTANT, "Requires the current-HA Linux CI environment")
 class HomeAssistantSessionTests(unittest.IsolatedAsyncioTestCase):
     """Use the real service registry, event bus and durable storage writer."""
 
@@ -154,6 +157,29 @@ class HomeAssistantSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(fired), ["king_smith_session_done", "king_smith_session_start"])
         for remove in removers:
             remove()
+
+    async def test_malformed_service_data_uses_home_assistant_validation_errors(self):
+        """Invalid action payloads fail schema validation before touching sessions."""
+        with self.assertRaises(probatio.Invalid):
+            await self.hass.services.async_call(
+                "king_smith", "upload_session",
+                {"device_id": "a" * 32, "session_id": "missing-account"},
+                blocking=True,
+            )
+        with self.assertRaises(probatio.Invalid):
+            await self.hass.services.async_call(
+                "king_smith", "upload_session",
+                {"device_id": "a" * 32, "session_id": "invalid-account",
+                 "garmin_entity_id": "not an entity id"},
+                blocking=True,
+            )
+        with self.assertRaises(probatio.Invalid):
+            await self.hass.services.async_call(
+                "king_smith", "list_sessions",
+                {"device_id": "a" * 32, "file_path": "/arbitrary/file.fit"},
+                blocking=True, return_response=True,
+            )
+        self.assertEqual(self.manager.list_sessions("a" * 32), [])
 
     async def test_manual_setup_form_serializes_for_current_ha_frontend(self):
         """Keep the working manual setup form compatible with HA serialization."""
