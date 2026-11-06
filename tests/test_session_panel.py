@@ -56,8 +56,9 @@ class SessionPanelTests(unittest.IsolatedAsyncioTestCase):
         self.hass = HomeAssistant(self.temporary.name)
         self.hass.config_entries = ConfigEntries(self.hass, {})
         # A bare HomeAssistant has neither config entries nor loaded registries.
-        # Startup loads devices before entities because entity migration waits
-        # for the device registry; mirror that prerequisite in this fixture.
+        # Startup explicitly sets up the device registry before loading it;
+        # entity loading then waits for that device registry to be ready.
+        dr.async_setup(self.hass)
         await dr.async_load(self.hass)
         await er.async_load(self.hass)
         self.hass.data["king_smith"] = {}
