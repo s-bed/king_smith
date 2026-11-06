@@ -30,14 +30,35 @@ _QUALITY = {
     "counter_reset": (
         "The treadmill counters restarted",
         "Device duration, distance or step counters reset during the recording. "
-        "The recorder accumulated measurements across the reset.",
+        "The recorder accumulated measurements across the reset. "
+        "A counter reset alone does not indicate missing data.",
+    ),
+    "counter_reset_while_moving": (
+        "The treadmill counters restarted while walking",
+        "The counters reset while the belt was still moving. Measurements before "
+        "and after the reset were retained, but any walking between the previous "
+        "sample and the reset cannot be recovered.",
     ),
 }
 
 
+def recording_is_partial(session: dict) -> bool:
+    """Apply current quality policy without changing an archived recording.
+
+    Earlier versions marked a normal counter-clearing stop as partial. Their
+    broad counter_reset flag alone does not prove a recording is incomplete.
+    New recordings identify a reset during motion separately, while all other
+    saved reasons, including unknown ones, retain their original partial flag.
+    """
+    flags = session.get("quality_flags") or []
+    if isinstance(flags, str):
+        flags = [flags]
+    return bool(session.get("partial")) and set(flags) != {"counter_reset"}
+
+
 def quality_details(session: dict) -> list[dict]:
     """Translate saved reasons without claiming which unmeasured metrics are absent."""
-    partial = bool(session.get("partial"))
+    partial = recording_is_partial(session)
     flags = session.get("quality_flags") or []
     if isinstance(flags, str):
         flags = [flags]
@@ -51,11 +72,11 @@ def quality_details(session: dict) -> list[dict]:
         title, description = _QUALITY.get(code, (
             "Recording quality note", f"The recorder reported quality flag: {code}.",
         ))
-        severity = "warning" if code != "counter_reset" or partial else "info"
+        severity = "warning" if code != "counter_reset" else "info"
         if code not in _QUALITY:
             severity = "warning" if partial else "info"
-        if code == "counter_reset" and partial:
-            description += " This recording is marked partial; some totals may be incomplete."
+        if code == "counter_reset" and session.get("partial") and not partial:
+            description += " An earlier recorder version labelled this reset as partial."
         result.append({
             "code": code, "title": title, "description": description,
             "severity": severity,

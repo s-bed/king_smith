@@ -151,3 +151,142 @@ test("sample charts leave long data gaps disconnected", () => {
   const svg = figure.children.find((child) => child.tagName === "svg");
   assert.equal(svg.children.filter((child) => child.tagName === "polyline").length, 2);
 });
+
+function reviewPanel(options = {}) {
+  const { KingSmithPanel } = runtime(); const panel = new KingSmithPanel(); const services = [];
+  let current = session({ status: "awaiting_review", ...options.session });
+  panel.hass = { connection: {}, callService: async (...args) => {
+    services.push(args);
+    if (options.service) await options.service(...args);
+    current = { ...current, status: args[1] === "upload_session" ? "queued" : "discarded" };
+  }, callWS: async (request) => request.type.endsWith("/list") ? {
+    sessions: [current], devices: [],
+    garmin_accounts: options.accounts || [{ entity_id: "sensor.garmin_account_a", entity_ids: ["sensor.garmin_account_a", "sensor.garmin_legacy_a"], name: "Garmin A", available: true }],
+    garmin_upload_available: options.available !== false,
+  } : detail(current) };
+  panel._connected = true;
+  return { panel, services, setSession: (updates) => { current = { ...current, ...updates }; } };
+}
+
+test("web upload requires a selected account and a click, and duplicate clicks dispatch once", async () => {
+  let release;
+  const { panel, services } = reviewPanel({ accounts: [
+    { entity_id: "sensor.account_a", name: "Garmin A", available: true },
+    { entity_id: "sensor.account_b", name: "Garmin B", available: true },
+  ], service: () => new Promise((done) => { release = done; }) });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  assert.equal(services.length, 0, "listing and rendering cannot approve an upload");
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, true);
+  const selector = panel.shadowRoot.getElementById("garmin-account"); selector.value = "sensor.account_b"; selector.events.change();
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, false);
+  const first = panel._sessionAction("upload");
+  await panel._sessionAction("upload"); await panel._sessionAction("discard");
+  assert.equal(services.length, 1);
+  assert.equal(services[0][0], "king_smith"); assert.equal(services[0][1], "upload_session");
+  assert.equal(services[0][2].garmin_entity_id, "sensor.account_b");
+  assert.equal(services[0][2].device_id, "pad-one");
+  assert.equal(services[0][2].session_id, session().session_id);
+  assert.equal(services[0][2].retry, false);
+  assert.equal(Object.hasOwn(services[0][2], "expected_attempts"), false);
+  release(); await first; await new Promise(setImmediate);
+  assert.ok(panel._container.textContent.includes("Your upload approval is saved"));
+  assert.equal(panel.shadowRoot.getElementById("upload-session"), undefined);
+});
+
+test("uncertain uploads require checking Garmin before an explicit retry and retain account routing", async () => {
+  const { panel, services } = reviewPanel({ session: { status: "needs_review", attempts: 1, garmin_entity_id: "sensor.garmin_legacy_a" } });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  assert.ok(panel._container.textContent.includes("previous upload may have reached Garmin"));
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, true);
+  await panel._sessionAction("upload"); assert.equal(services.length, 0);
+  const checkbox = panel.shadowRoot.getElementById("confirm-retry"); checkbox.checked = true; checkbox.events.change();
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, false);
+  await panel._sessionAction("upload");
+  assert.equal(services[0][2].retry, true);
+  assert.equal(services[0][2].expected_attempts, 1);
+  assert.equal(services[0][2].garmin_entity_id, "sensor.garmin_legacy_a");
+  assert.equal(panel._retryConfirmed, false);
+});
+
+test("upload approval remains possible while Garmin is unavailable, but requires a known account", async () => {
+  const { panel, services } = reviewPanel({ available: false, accounts: [
+    { entity_id: "sensor.garmin_offline", name: "Garmin offline", available: false },
+  ] });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  assert.ok(panel._container.textContent.includes("it will wait until the selected account"));
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, false);
+  await panel._sessionAction("upload"); assert.equal(services.length, 1);
+  const missing = reviewPanel({ accounts: [] });
+  await missing.panel._loadSessions(); await new Promise(setImmediate);
+  assert.ok(missing.panel._container.textContent.includes("No Garmin Connect account sensors"));
+  assert.equal(missing.panel.shadowRoot.getElementById("upload-session").disabled, true);
+  await missing.panel._sessionAction("upload"); assert.equal(missing.services.length, 0);
+});
+
+test("web controls respect resolved and in-flight states and retain discarded recordings", async () => {
+  for (const status of ["sent", "discarded", "uploading"]) {
+    const { panel, services } = reviewPanel({ session: { status } });
+    await panel._loadSessions(); await new Promise(setImmediate);
+    assert.equal(panel.shadowRoot.getElementById("upload-session"), undefined);
+    assert.equal(panel.shadowRoot.getElementById("discard-session"), undefined);
+    await panel._sessionAction("upload"); await panel._sessionAction("discard");
+    assert.equal(services.length, 0);
+    assert.ok(panel._container.textContent.includes("Download FIT"));
+  }
+  const { panel, services } = reviewPanel({ session: { status: "blocked", garmin_entity_id: "sensor.garmin_account_a" } });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, true);
+  assert.ok(panel.shadowRoot.getElementById("discard-session").textContent.includes("Cancel queued upload"));
+  await panel._sessionAction("discard"); await new Promise(setImmediate);
+  assert.equal(services[0][1], "discard_session");
+  assert.equal(services[0][2].session_id, session().session_id);
+  assert.ok(panel._container.textContent.includes("kept locally and excluded"));
+});
+
+test("account changes reset retry confirmation and service errors remain visible", async () => {
+  const { panel, services } = reviewPanel({ session: { status: "needs_review", garmin_entity_id: "sensor.account_a" }, accounts: [
+    { entity_id: "sensor.account_a", name: "Garmin A", available: true },
+    { entity_id: "sensor.account_b", name: "Garmin B", available: true },
+  ], service: async () => { throw new Error("Storage is unavailable"); } });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  panel._retryConfirmed = true;
+  const selector = panel.shadowRoot.getElementById("garmin-account"); selector.value = "sensor.account_b"; selector.events.change();
+  assert.equal(panel._retryConfirmed, false);
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, true);
+  const checkbox = panel.shadowRoot.getElementById("confirm-retry"); checkbox.checked = true; checkbox.events.change();
+  await panel._sessionAction("upload");
+  assert.equal(services[0][2].garmin_entity_id, "sensor.account_b");
+  assert.ok(panel._container.textContent.includes("Storage is unavailable"));
+  assert.equal(panel._actionSession, null);
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, false);
+});
+
+test("session events refresh upload status and subscriptions end when the panel disconnects", async () => {
+  const { panel, services } = reviewPanel(); const callbacks = {}; const unsubscribed = [];
+  panel._hass.connection.subscribeEvents = async (handler, event) => {
+    callbacks[event] = handler; return () => unsubscribed.push(event);
+  };
+  await panel._subscribe();
+  assert.deepEqual(Object.keys(callbacks), ["king_smith_session_ready", "king_smith_session_updated"]);
+  callbacks.king_smith_session_updated(); await new Promise(setImmediate);
+  assert.equal(panel._sessions.length, 1);
+  assert.equal(services.length, 0);
+  panel.disconnectedCallback();
+  assert.deepEqual(unsubscribed, ["king_smith_session_ready", "king_smith_session_updated"]);
+});
+
+test("retry confirmation belongs to one saved upload attempt, including retries from another client", async () => {
+  const { panel, setSession } = reviewPanel({ session: {
+    status: "needs_review", attempts: 1, last_attempt: 1700000300, garmin_entity_id: "sensor.garmin_account_a",
+  } });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  const checkbox = panel.shadowRoot.getElementById("confirm-retry"); checkbox.checked = true; checkbox.events.change();
+  await panel._select(session().session_id);
+  assert.equal(panel._retryConfirmed, true, "refreshing the same attempt keeps its confirmation");
+  setSession({ status: "uploading", attempts: 2, last_attempt: 1700000400 });
+  await panel._select(session().session_id);
+  assert.equal(panel._retryConfirmed, false, "another client starting dispatch invalidates the old confirmation");
+  setSession({ status: "needs_review" }); await panel._select(session().session_id);
+  assert.equal(panel.shadowRoot.getElementById("confirm-retry").checked, false);
+  assert.equal(panel.shadowRoot.getElementById("upload-session").disabled, true);
+});

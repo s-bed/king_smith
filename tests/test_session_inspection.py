@@ -118,7 +118,26 @@ class SessionInspectionTests(unittest.TestCase):
         result = inspection.quality_details({"quality_flags": ["counter_reset"], "partial": False})
         self.assertEqual(result[0]["severity"], "info")
         result = inspection.quality_details({"quality_flags": ["counter_reset"], "partial": True})
-        self.assertEqual(result[0]["severity"], "warning")
+        self.assertEqual(result[0]["severity"], "info")
+        self.assertIn("earlier recorder version", result[0]["description"])
+
+    def test_legacy_reset_only_partial_is_reinterpreted_without_mutation(self):
+        """Only the old broad reset classification is relaxed, retaining raw provenance."""
+        session = {"quality_flags": ["counter_reset"], "partial": True}
+        self.assertFalse(inspection.recording_is_partial(session))
+        inspection.quality_details(session)
+        self.assertEqual(session, {"quality_flags": ["counter_reset"], "partial": True})
+        for flags in (["counter_reset", "counter_reset_while_moving"], ["counter_reset", "data_gap"], ["started_mid_walk"], ["counter_jump"], ["connection_lost"], ["future_reason"], []):
+            with self.subTest(flags=flags):
+                self.assertTrue(inspection.recording_is_partial({"quality_flags": flags, "partial": True}))
+
+    def test_moving_reset_retains_warning_and_incomplete_classification(self):
+        """A specific reset during motion never disappears behind the broad reset note."""
+        session = {"quality_flags": ["counter_reset", "counter_reset_while_moving"], "partial": True}
+        self.assertTrue(inspection.recording_is_partial(session))
+        result = inspection.quality_details(session)
+        self.assertEqual([item["severity"] for item in result], ["info", "warning"])
+        self.assertIn("cannot be recovered", result[1]["description"])
 
     def test_unknown_and_unspecified_reasons_remain_visible(self):
         """Unknown future flags and old partial records retain honest explanations."""

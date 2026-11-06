@@ -72,6 +72,7 @@ class SessionPanelTests(unittest.IsolatedAsyncioTestCase):
                 "filename": f"{SESSION_ID}.fit", "mime_type": "application/octet-stream",
                 "content": base64.b64encode(b"FIT test bytes").decode(),
             }),
+            account_ready=Mock(return_value=False),
             last_error=None,
         )
         self.panel_module = session_panel
@@ -154,9 +155,82 @@ class SessionPanelTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(connection.errors)
         self.assertEqual(connection.results[0][1]["sessions"], [self.summary])
         self.assertEqual(connection.results[0][1]["devices"], self.manager.list_devices.return_value)
+        self.assertEqual(connection.results[0][1]["garmin_accounts"], [])
+        self.assertFalse(connection.results[0][1]["garmin_upload_available"])
         connection = await self.dispatch("get", session_id=SESSION_ID)
         self.assertEqual(connection.results, [(1, self.detail)])
         self.manager.async_session_detail.assert_awaited_once_with(SESSION_ID)
+
+    async def test_account_list_groups_only_enabled_garmin_sensors_and_prefers_available_alias(self):
+        """Route each account through its own enabled sensor, retaining saved aliases."""
+        from homeassistant.helpers import entity_registry as er
+
+        def entity(entity_id, entry_id="account_one", platform="garmin_connect", disabled_by=None):
+            return SimpleNamespace(
+                entity_id=entity_id, config_entry_id=entry_id,
+                platform=platform, disabled_by=disabled_by,
+            )
+
+        entities = [
+            entity("sensor.garmin_a_unknown"), entity("sensor.garmin_z_steps"),
+            entity("sensor.garmin_disabled", disabled_by="user"),
+            entity("sensor.garmin_offline", "account_two"),
+            entity("sensor.unrelated", platform="other_integration"),
+            entity("button.garmin_sync"), entity("sensor.orphan", "missing"),
+            entity("sensor.no_account", None),
+        ]
+        registry = SimpleNamespace(entities={item.entity_id: item for item in entities})
+        entries = {
+            "account_one": SimpleNamespace(domain="garmin_connect", title="First account"),
+            "account_two": SimpleNamespace(domain="garmin_connect", title="Second account"),
+        }
+        self.hass.states.async_set("sensor.garmin_a_unknown", "unknown")
+        self.hass.states.async_set("sensor.garmin_z_steps", "100")
+        self.hass.states.async_set("sensor.garmin_offline", "unavailable")
+        self.manager.account_ready.side_effect = lambda entity_id: entity_id != "sensor.garmin_offline"
+        with (
+            patch.object(er, "async_get", return_value=registry),
+            patch.object(self.hass.config_entries, "async_get_entry", side_effect=entries.get),
+        ):
+            connection = await self.dispatch("list")
+        self.assertFalse(connection.errors)
+        self.assertEqual(connection.results[0][1]["garmin_accounts"], [
+            {
+                "entity_id": "sensor.garmin_z_steps", "name": "First account", "available": True,
+                "entity_ids": ["sensor.garmin_a_unknown", "sensor.garmin_z_steps"],
+            },
+            {
+                "entity_id": "sensor.garmin_offline", "name": "Second account", "available": False,
+                "entity_ids": ["sensor.garmin_offline"],
+            },
+        ])
+
+    async def test_loaded_account_state_and_public_upload_service_are_reported_independently(self):
+        """A sensor value alone does not imply an unloaded account can dispatch uploads."""
+        from homeassistant.core import callback
+        from homeassistant.helpers import entity_registry as er
+
+        sensor = SimpleNamespace(
+            entity_id="sensor.garmin_steps", config_entry_id="account_one",
+            platform="garmin_connect", disabled_by=None,
+        )
+        self.hass.states.async_set(sensor.entity_id, "100", {"friendly_name": "Garmin steps"})
+        entry = SimpleNamespace(domain="garmin_connect", title="")
+
+        @callback
+        def upload(call):
+            pass
+
+        self.hass.services.async_register("garmin_connect", "upload_activity", upload)
+        with (
+            patch.object(er, "async_get", return_value=SimpleNamespace(entities={sensor.entity_id: sensor})),
+            patch.object(self.hass.config_entries, "async_get_entry", return_value=entry),
+        ):
+            connection = await self.dispatch("list")
+        payload = connection.results[0][1]
+        self.assertTrue(payload["garmin_upload_available"])
+        self.assertEqual(payload["garmin_accounts"][0]["name"], "Garmin steps")
+        self.assertFalse(payload["garmin_accounts"][0]["available"])
 
     async def test_fit_and_json_downloads_use_identifiers_and_preserve_bytes(self):
         """Download responses can be decoded into exactly the stored file bytes."""

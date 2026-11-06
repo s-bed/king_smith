@@ -256,7 +256,7 @@ class SessionBlueprintTests(unittest.TestCase):
         )
         self.assertEqual(set(services), {"list_sessions", "upload_session", "discard_session"})
         upload = services["upload_session"]["fields"]
-        self.assertEqual(set(upload), {"device_id", "session_id", "garmin_entity_id", "retry"})
+        self.assertEqual(set(upload), {"device_id", "session_id", "garmin_entity_id", "retry", "expected_attempts"})
         self.assertFalse(upload["retry"]["default"])
         self.assertIn("keep the recording locally", services["discard_session"]["description"])
 

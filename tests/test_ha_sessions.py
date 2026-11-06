@@ -151,6 +151,38 @@ class HomeAssistantSessionTests(unittest.IsolatedAsyncioTestCase):
             await self.manager._worker_task
         self.assertEqual(len(calls), 1)
 
+    async def test_retry_action_rejects_a_stale_reviewed_attempt(self):
+        """The public schema forwards the web review revision before dispatching."""
+        from homeassistant.exceptions import HomeAssistantError
+
+        calls = []
+
+        async def upload(call):
+            calls.append(call.data)
+            raise HomeAssistantError("Uncertain test upload")
+
+        self.hass.services.async_register("garmin_connect", "upload_activity", upload)
+        session = await self.record_session()
+        arguments = {
+            "device_id": "a" * 32, "session_id": session["session_id"],
+            "garmin_entity_id": "sensor.garmin_steps",
+        }
+        await self.hass.services.async_call("king_smith", "upload_session", arguments, blocking=True)
+        await self.manager._worker_task
+        self.assertEqual(self.manager.sessions[session["session_id"]]["status"], "needs_review")
+        with self.assertRaisesRegex(HomeAssistantError, "attempt changed"):
+            await self.hass.services.async_call(
+                "king_smith", "upload_session",
+                {**arguments, "retry": True, "expected_attempts": 0}, blocking=True,
+            )
+        self.assertEqual(len(calls), 1)
+        await self.hass.services.async_call(
+            "king_smith", "upload_session",
+            {**arguments, "retry": True, "expected_attempts": 1}, blocking=True,
+        )
+        await self.manager._worker_task
+        self.assertEqual(len(calls), 2)
+
     async def test_device_trigger_schemas_and_event_filters(self):
         """Both repaired device triggers attach and filter the selected pad."""
         triggers = await device_trigger.async_get_triggers(self.hass, "a" * 32)

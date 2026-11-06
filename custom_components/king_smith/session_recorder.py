@@ -206,7 +206,12 @@ class SessionRecorder:
             or sample.steps < previous.steps
         )
         if reset:
-            self._flag("counter_reset", partial=self._paused_at is None and not starting)
+            # WalkingPads normally clear their counters on stop/start. The
+            # first stopped packet arrives before _paused_at is set, so testing
+            # only that state incorrectly labelled every such stop as partial.
+            self._flag("counter_reset")
+            if not starting and self._paused_at is None and sample.speed_mps > 0:
+                self._flag("counter_reset_while_moving", partial=True)
         if duration > interval + 1:
             self._flag("counter_jump", partial=True)
             duration = interval

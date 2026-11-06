@@ -124,6 +124,44 @@ class SessionRecorderTests(unittest.TestCase):
         self.assertFalse(result["partial"])
         self.assertIn("counter_reset", result["quality_flags"])
 
+    def test_normal_counter_clear_on_stop_is_not_partial(self):
+        """A stop that clears all counters keeps captured totals without an alarm."""
+        self.start_walk()
+        self.recorder.receive(sample(110, 10, 20, 16, 1))
+        self.recorder.receive(sample(115))
+        result = self.recorder.expire(235)[0]
+        self.assertEqual(result["moving_seconds"], 10)
+        self.assertEqual(result["distance_m"], 20)
+        self.assertEqual(result["steps"], 16)
+        self.assertFalse(result["partial"])
+        self.assertEqual(result["quality_flags"], ["counter_reset"])
+
+    def test_counters_cleared_on_stop_and_resume_preserve_both_segments(self):
+        """Repeated normal stop resets neither erase totals nor imply data loss."""
+        self.start_walk()
+        self.recorder.receive(sample(110, 10, 20, 16, 1))
+        self.recorder.receive(sample(115))
+        self.recorder.receive(sample(120, 5, 10, 8, 1))
+        self.recorder.receive(sample(125))
+        result = self.recorder.expire(245)[0]
+        self.assertEqual(result["moving_seconds"], 15)
+        self.assertEqual(result["distance_m"], 30)
+        self.assertEqual(result["steps"], 24)
+        self.assertEqual([item["event"] for item in result["timer_events"]], ["start", "stop", "start", "stop"])
+        self.assertFalse(result["partial"])
+
+    def test_counter_reset_while_moving_retains_specific_partial_reason(self):
+        """A reset without a witnessed stop can lose an unobserved moving interval."""
+        self.start_walk()
+        self.recorder.receive(sample(110, 2, 4, 3, 1))
+        self.recorder.receive(sample(115, 7, 14, 11))
+        result = self.recorder.expire(235)[0]
+        self.assertEqual(result["moving_seconds"], 12)
+        self.assertEqual(result["distance_m"], 24)
+        self.assertEqual(result["steps"], 19)
+        self.assertTrue(result["partial"])
+        self.assertIn("counter_reset_while_moving", result["quality_flags"])
+
     def test_missing_stationary_packets_do_not_make_a_walk_partial(self):
         """An unchanged stopped counter needs no invented stationary records."""
         self.start_walk()

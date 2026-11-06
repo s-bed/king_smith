@@ -312,6 +312,20 @@ class SessionManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovered.sessions[session_id]["status"], "needs_review")
         self.assertEqual(len(self.hass.services.calls), 1)
 
+    async def test_retry_rejects_an_unseen_attempt_from_another_client(self):
+        """An old web confirmation cannot approve retrying a newer uncertain upload."""
+        session_id = await self.finish_walk()
+        self.hass.services.error = OSError("Uncertain upload")
+        await self.manager.async_upload("pad", session_id, "sensor.garmin")
+        await self.drain()
+        await self.manager.async_upload("pad", session_id, "sensor.garmin", retry=True, expected_attempts=1)
+        await self.drain()
+        self.assertEqual(self.manager.sessions[session_id]["attempts"], 2)
+        with self.assertRaisesRegex(SessionError, "attempt changed"):
+            await self.manager.async_upload("pad", session_id, "sensor.garmin", retry=True, expected_attempts=1)
+        self.assertEqual(len(self.hass.services.calls), 2)
+        self.assertEqual(self.manager.sessions[session_id]["status"], "needs_review")
+
     async def test_restart_marks_uploading_as_uncertain_without_resending(self):
         """A persisted in-flight request becomes a review item on restart."""
         session_id = await self.finish_walk()
@@ -499,11 +513,31 @@ class SessionManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail["fit_summary"]["record_count"], 5)
         self.assertEqual(detail["quality_details"][0]["code"], "counter_reset")
         self.assertIn("counters", detail["quality_details"][0]["title"])
+        self.assertEqual(detail["quality_details"][0]["severity"], "info")
+        self.assertFalse(detail["session"]["partial"])
+        self.assertTrue(detail["session"]["recorded_partial"])
+        self.assertTrue(detail["recording"]["partial"])
+        self.assertTrue(self.manager.sessions[session_id]["partial"])
+        self.assertFalse(self.manager.list_sessions("pad")[0]["partial"])
+        self.assertFalse(self.manager.list_all_sessions()[0]["partial"])
+        downloaded = await self.manager.async_session_download(session_id, "json")
+        self.assertIn(b'"partial": true', base64.b64decode(downloaded["content"]))
         self.assertIsNone(detail["fit_error"])
         self.assertIsNone(detail["recording_error"])
         # A detail read never regenerates or mutates the source recording.
         detail["recording"]["steps"] = 0
         self.assertEqual((await self.manager.async_session_detail(session_id))["recording"]["steps"], 39)
+
+    async def test_real_quality_losses_still_show_as_partial_in_public_summaries(self):
+        """Historical reset normalization never hides evidence of an incomplete walk."""
+        session_id = await self.finish_walk()
+        for flags in (["counter_reset", "data_gap"], ["counter_reset_while_moving"], []):
+            with self.subTest(flags=flags):
+                self.manager.sessions[session_id].update(partial=True, quality_flags=flags)
+                listed = self.manager.list_sessions("pad")[0]
+                self.assertTrue(listed["partial"])
+                self.assertTrue(listed["recorded_partial"])
+                self.assertTrue(listed["quality_notes"])
 
     async def test_session_downloads_are_identical_to_the_existing_archives(self):
         """FIT and JSON downloads return the original bytes, not a reconstructed activity."""

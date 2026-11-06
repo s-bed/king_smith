@@ -60,6 +60,16 @@ upload_session:
       default: false
       selector:
         boolean:
+    expected_attempts:
+      name: Reviewed upload attempt count
+      description: >-
+        Optional attempts value from the reviewed session. A retry is refused
+        if another upload attempt occurred since that review.
+      advanced: true
+      selector:
+        number:
+          min: 0
+          mode: box
 
 discard_session:
   name: Discard a WalkingPad upload

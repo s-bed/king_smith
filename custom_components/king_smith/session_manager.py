@@ -16,7 +16,7 @@ from uuid import UUID
 
 from .fit_export import encode_session
 from .session_recorder import SessionRecorder, StatusSample
-from .session_inspection import inspect_fit, quality_details
+from .session_inspection import inspect_fit, quality_details, recording_is_partial
 
 _LOGGER = logging.getLogger(__name__)
 RESOLVED = {"sent", "discarded"}
@@ -105,6 +105,8 @@ class SessionManager:
     @staticmethod
     def _public_summary(session: dict) -> dict:
         result = deepcopy(session)
+        result["recorded_partial"] = bool(session.get("partial"))
+        result["partial"] = recording_is_partial(session)
         result["quality_notes"] = [detail["description"] for detail in quality_details(session)]
         return result
 
@@ -134,7 +136,7 @@ class SessionManager:
         except (OSError, ValueError):
             fit_error = "The saved FIT file is unavailable or failed validation."
         return {
-            "session": session, "recording": source,
+            "session": self._public_summary(session), "recording": source,
             "quality_details": quality_details(session),
             "fit_summary": fit_summary, "fit_error": fit_error,
             "recording_error": recording_error,
@@ -221,7 +223,8 @@ class SessionManager:
             _LOGGER.exception("Could not checkpoint WalkingPad sessions")
 
     async def async_upload(
-        self, device_id: str, session_id: str, garmin_entity_id: str, retry: bool = False
+        self, device_id: str, session_id: str, garmin_entity_id: str, retry: bool = False,
+        expected_attempts: int | None = None,
     ) -> dict:
         """Durably queue a user-approved upload; do not dispatch before saving."""
         async with self._lock:
@@ -232,6 +235,8 @@ class SessionManager:
                 return deepcopy(session)
             if session["status"] == "needs_review" and not retry:
                 raise SessionError("Check Garmin first, then explicitly request a retry.")
+            if retry and expected_attempts is not None and session["attempts"] != expected_attempts:
+                raise SessionError("The upload attempt changed. Refresh and check Garmin again before retrying.")
             if not garmin_entity_id.startswith("sensor."):
                 raise SessionError("Select a Garmin Connect sensor for the account.")
             if session["status"] == "failed_local" and session_id not in self.pending_archives:

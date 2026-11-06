@@ -11,7 +11,8 @@ const QUALITY_LABELS = {
   started_mid_walk: ["Recording started during walking", "Walking before the first observation was not included."],
   data_gap: ["Some samples were delayed or missing", "The device counters may still preserve the totals; a gap does not necessarily mean distance or steps were lost."],
   connection_lost: ["Connection interrupted", "This recording ends at the last received sample, before the connection timeout."],
-  counter_reset: ["Device counters restarted", "The recorder combined counter segments. Review the totals if the pad restarted during walking."],
+  counter_reset: ["Device counters restarted", "The recorder combined the counter segments. This routine reset does not mark the recording as partial."],
+  counter_reset_while_moving: ["Device counters restarted during walking", "The recorder combined the observed segments, but measurements between the last observation and the reset may be missing."],
   counter_jump: ["Device timing was inconsistent", "The recorder limited an implausible duration change. Timing may be incomplete."],
 };
 
@@ -113,6 +114,7 @@ const STYLE = `
   .detail { padding:22px; min-height:280px; } .detail-header { display:flex; gap:14px; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; } .detail-header p { margin:5px 0; } .actions { display:flex; gap:8px; flex-wrap:wrap; margin:18px 0; } .action { background:transparent; border:1px solid var(--primary-color,#03a9f4); color:var(--primary-color,#0395ce); padding:9px 14px; border-radius:7px; font-weight:500; } .header-refresh { border:1px solid currentColor; color:inherit; background:transparent; padding:7px 12px; border-radius:6px; }
   .metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; padding:18px 0; margin:12px 0; border-top:1px solid var(--divider-color,#ddd); border-bottom:1px solid var(--divider-color,#ddd); } .metrics strong { display:block; font-size:22px; font-weight:500; margin:5px 0; font-variant-numeric:tabular-nums; }
   .notice { border:1px solid var(--divider-color,#ddd); border-left:4px solid var(--info-color,#039be5); padding:12px 14px; border-radius:6px; margin:12px 0; } .notice.warning { border-left-color:var(--warning-color,#ff9800); } .notice.error { border-left-color:var(--error-color,#db4437); } .notice strong { display:block; margin-bottom:4px; } .notice p { margin:0; }
+  .garmin-controls { margin:18px 0; padding:0 0 16px; border-bottom:1px solid var(--divider-color,#ddd); } .garmin-controls h3 { margin:0 0 12px; } .garmin-controls .actions { margin:12px 0; } .retry-confirmation { display:flex; flex-direction:row; align-items:flex-start; gap:9px; margin:14px 0; line-height:1.5; font-size:14px; color:var(--primary-text-color); } .retry-confirmation input { flex:none; margin-top:4px; } .primary-action { color:var(--text-primary-color,#fff); background:var(--primary-color,#03a9f4); }
   .chart { margin:20px 0; } figcaption { font-size:14px; font-weight:500; margin-bottom:5px; } svg { display:block; width:100%; overflow:visible; } svg text { fill:var(--secondary-text-color,#666); font-size:11px; font-family:inherit; } .grid { stroke:var(--divider-color,#ddd); stroke-width:1; } .series { fill:none; stroke:var(--primary-color,#03a9f4); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
   .sample-point { fill:var(--primary-color,#03a9f4); } .table-scroll { overflow-x:auto; } table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; } th,td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--divider-color,#ddd); white-space:nowrap; } th { font-weight:500; color:var(--secondary-text-color,#666); } td:not(:first-child),th:not(:first-child) { text-align:right; } details { margin-top:22px; } summary { cursor:pointer; font-weight:500; padding:8px 0; } code { font-size:12px; overflow-wrap:anywhere; } .empty { padding:30px 20px; text-align:center; } .status { margin:0 0 16px; min-height:20px; } .quality { margin-bottom:18px; }
   @media(max-width:950px) { main { padding:16px; } .layout { grid-template-columns:1fr; } .session-list { max-height:350px; } .summary { gap:8px; } .summary > div { padding:12px; } .summary strong { font-size:20px; } }
@@ -131,12 +133,15 @@ class KingSmithPanel extends HTMLElement {
     this._detailLoading = false; this._error = ""; this._detailError = "";
     this._storageError = ""; this._downloadError = ""; this._downloading = "";
     this._listRequest = 0; this._detailRequest = 0; this._connected = false;
+    this._garminAccounts = []; this._garminUploadAvailable = false; this._garminSelections = {};
+    this._actionSession = null; this._actionError = ""; this._actionMessage = ""; this._actionResultSession = null;
+    this._retryConfirmed = false; this._retryAttempt = ""; this._subscriptions = []; this._subscriptionRequest = 0;
   }
 
   set hass(value) {
     const changed = this._hass?.connection !== value?.connection;
     this._hass = value;
-    if (changed && this._connected) this._loadSessions();
+    if (changed && this._connected) { this._subscribe(); this._loadSessions(); }
   }
 
   set panel(value) { this._panel = value; }
@@ -146,13 +151,35 @@ class KingSmithPanel extends HTMLElement {
   connectedCallback() {
     this._connected = true;
     this._render();
-    if (this._hass) this._loadSessions();
+    if (this._hass) { this._subscribe(); this._loadSessions(); }
   }
 
   disconnectedCallback() {
     this._connected = false;
     this._listRequest += 1; this._detailRequest += 1;
     this._loading = false; this._detailLoading = false;
+    this._unsubscribe();
+  }
+
+  _unsubscribe() {
+    this._subscriptionRequest += 1;
+    this._subscriptions.forEach((unsubscribe) => unsubscribe());
+    this._subscriptions = [];
+  }
+
+  async _subscribe() {
+    this._unsubscribe();
+    const request = this._subscriptionRequest;
+    if (!this._hass?.connection?.subscribeEvents) return;
+    for (const event of ["king_smith_session_ready", "king_smith_session_updated"]) {
+      try {
+        const unsubscribe = await this._hass.connection.subscribeEvents(() => {
+          if (this._connected) this._loadSessions();
+        }, event);
+        if (!this._connected || request !== this._subscriptionRequest) unsubscribe();
+        else this._subscriptions.push(unsubscribe);
+      } catch (_error) { /* Refresh remains available when event subscriptions fail. */ }
+    }
   }
 
   _when(timestamp) {
@@ -176,6 +203,8 @@ class KingSmithPanel extends HTMLElement {
       if (!this._connected || request !== this._listRequest) return;
       this._sessions = response.sessions || []; this._devices = response.devices || [];
       this._storageError = response.storage_error || "";
+      this._garminAccounts = response.garmin_accounts || [];
+      this._garminUploadAvailable = Boolean(response.garmin_upload_available);
       const filtered = this._filtered();
       const selected = filtered.find((session) => session.session_id === this._selectedId) || filtered[0];
       if (selected) this._select(selected.session_id);
@@ -188,13 +217,20 @@ class KingSmithPanel extends HTMLElement {
   }
 
   async _select(sessionId) {
+    if (sessionId !== this._selectedId) this._retryConfirmed = false;
     this._selectedId = sessionId; this._details = null; this._detailError = "";
     this._downloadError = ""; this._detailLoading = true;
     const request = ++this._detailRequest;
     this._render();
     try {
       const details = await this._hass.callWS({ type: `${WS}get`, session_id: sessionId });
-      if (request === this._detailRequest && this._connected) this._details = details;
+      if (request === this._detailRequest && this._connected) {
+        const session = details.session;
+        const attempt = JSON.stringify([session.session_id, session.status, session.attempts, session.last_attempt, session.garmin_entity_id]);
+        if (attempt !== this._retryAttempt) this._retryConfirmed = false;
+        this._retryAttempt = attempt;
+        this._details = details;
+      }
     } catch (error) {
       if (request === this._detailRequest) this._detailError = `Could not open this session. ${errorText(error)}`;
     } finally {
@@ -215,6 +251,40 @@ class KingSmithPanel extends HTMLElement {
   _clearSelection() {
     this._selectedId = null; this._details = null; this._detailRequest += 1;
     this._detailLoading = false; this._detailError = ""; this._downloadError = "";
+    this._retryConfirmed = false; this._retryAttempt = "";
+  }
+
+  _garminAccount(session) {
+    const selected = this._garminSelections[session.session_id];
+    if (selected && this._garminAccounts.some((account) => account.entity_id === selected)) return selected;
+    if (session.garmin_entity_id && this._garminAccounts.some((account) => account.entity_id === session.garmin_entity_id || account.entity_ids?.includes(session.garmin_entity_id))) return session.garmin_entity_id;
+    return this._garminAccounts.length === 1 ? this._garminAccounts[0].entity_id : "";
+  }
+
+  async _sessionAction(action) {
+    const session = this._details?.session;
+    if (!session || this._actionSession) return;
+    const upload = action === "upload";
+    const retry = session.status === "needs_review";
+    const account = this._garminAccount(session);
+    if (upload && (!account || (retry && !this._retryConfirmed)
+      || !["awaiting_review", "failed_local", "needs_review", "blocked"].includes(session.status))) return;
+    if (!upload && ["uploading", "sent", "discarded"].includes(session.status)) return;
+    this._actionSession = session.session_id; this._actionResultSession = session.session_id;
+    this._actionError = ""; this._actionMessage = ""; this._render();
+    try {
+      const data = { session_id: session.session_id, device_id: session.device_id };
+      if (upload) Object.assign(data, { garmin_entity_id: account, retry });
+      if (upload && retry) data.expected_attempts = session.attempts;
+      await this._hass.callService("king_smith", upload ? "upload_session" : "discard_session", data);
+      this._retryConfirmed = false;
+      this._actionMessage = upload ? "Upload approval saved. The status below follows the upload result." : "Recording kept locally; Garmin upload skipped.";
+      await this._loadSessions();
+    } catch (error) {
+      this._actionError = `Could not ${upload ? "approve this upload" : "keep this recording locally"}. ${errorText(error)}`;
+    } finally {
+      this._actionSession = null; this._render();
+    }
   }
 
   async _download(format) {
@@ -266,7 +336,7 @@ class KingSmithPanel extends HTMLElement {
     refresh.id = "refresh"; refresh.disabled = this._loading;
     header.append(menu, node("h1", "WalkingPad sessions"), refresh);
     const main = node("main");
-    const status = node("p", this._loading ? "Loading saved sessions…" : "Browse saved walks, inspect their measurements, and download activity files.", "status muted small");
+    const status = node("p", this._loading ? "Loading saved sessions…" : "Review saved walks, upload to Garmin, and download activity files.", "status muted small");
     status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite"); main.append(status);
     if (this._error) main.append(this._notice("Session history unavailable", this._error, "error"));
     if (this._storageError) main.append(this._notice("Recording storage needs attention", this._storageError, "error"));
@@ -321,6 +391,7 @@ class KingSmithPanel extends HTMLElement {
       const item = node("div"); item.append(node("span", label, "muted small"), node("strong", value)); metrics.append(item);
     }
     detail.append(metrics);
+    detail.append(this._renderGarminControls(session));
     const quality = node("div", null, "quality");
     let explanations = this._details.quality_details;
     if (!Array.isArray(explanations) || !explanations.length) explanations = (session.quality_flags || []).map((code) => ({
@@ -348,6 +419,59 @@ class KingSmithPanel extends HTMLElement {
     technical.append(this._table(["Time", "Distance (m)", "Speed (km/h)", "Cadence (spm)", "Steps"], samples.slice(0, 100).map((sample) => [this._when(sample.timestamp), metric(sample.distance_m, 0), metric(finite(sample.speed_mps) * 3.6), metric(sample.cadence_spm), metric(sample.steps, 0)])));
     detail.append(technical);
     return detail;
+  }
+
+  _renderGarminControls(session) {
+    const section = node("section", null, "garmin-controls"); section.append(node("h3", "Garmin Connect"));
+    const status = session.status;
+    const accountId = this._garminAccount(session);
+    const account = this._garminAccounts.find((item) => item.entity_id === accountId || item.entity_ids?.includes(accountId));
+    const busy = Boolean(this._actionSession);
+    if (["sent", "discarded", "uploading", "queued"].includes(status)) {
+      const messages = {
+        sent: "This recording has already been sent to Garmin. It will not be uploaded again.",
+        discarded: "This recording is kept locally and excluded from Garmin uploads.",
+        uploading: "This activity is being sent to Garmin. It can no longer be cancelled.",
+        queued: "Your upload approval is saved. The recording is waiting for the upload worker.",
+      };
+      section.append(node("p", messages[status], "muted small"));
+      if (session.garmin_entity_id && ["sent", "uploading", "queued"].includes(status)) section.append(node("p", `Selected account: ${account?.name || session.garmin_entity_id}`, "muted small"));
+    } else {
+      const entries = [["", "Select a Garmin account"], ...this._garminAccounts.map((item) => [
+        item === account && item.entity_ids?.includes(accountId) ? accountId : item.entity_id,
+        `${item.name}${item.available ? "" : " (unavailable)"}`,
+      ])];
+      const selector = this._selectControl("Garmin account", "garmin-account", entries, accountId, (value) => {
+        this._garminSelections[session.session_id] = value; this._retryConfirmed = false; this._render();
+      });
+      selector.children[selector.children.length - 1].disabled = busy;
+      section.append(selector);
+      if (!this._garminAccounts.length) section.append(node("p", "No Garmin Connect account sensors are configured. Add the Garmin Connect integration, then refresh this page.", "muted small"));
+      else if (!this._garminUploadAvailable || (account && !account.available)) section.append(node("p", "Garmin is currently unavailable. You can approve the upload now; it will wait until the selected account and upload action recover.", "muted small"));
+      if (status === "blocked") section.append(node("p", "Upload approval is already saved and will resume when Garmin recovers. You may select another account or keep this recording locally.", "muted small"));
+      if (status === "needs_review") {
+        section.append(this._notice("Check Garmin before retrying", "The previous upload may have reached Garmin. Retry only after checking that this activity is absent, to avoid a duplicate.", "warning"));
+        const label = node("label", null, "retry-confirmation"); const checkbox = node("input");
+        checkbox.type = "checkbox"; checkbox.id = "confirm-retry"; checkbox.checked = this._retryConfirmed; checkbox.disabled = busy;
+        checkbox.addEventListener("change", () => { this._retryConfirmed = checkbox.checked; this._render(); });
+        label.append(checkbox, node("span", "I checked Garmin and this activity is not there.")); section.append(label);
+      }
+      const actions = node("div", null, "actions");
+      const uploadLabel = status === "needs_review" ? "Retry upload to Garmin" : status === "failed_local" ? "Rebuild file and upload" : status === "blocked" ? "Update upload account" : "Upload to Garmin";
+      const upload = button(this._actionSession === session.session_id ? "Saving…" : uploadLabel, () => this._sessionAction("upload"), "action primary-action");
+      upload.id = "upload-session"; upload.disabled = busy || !accountId || (status === "needs_review" && !this._retryConfirmed) || (status === "blocked" && accountId === session.garmin_entity_id);
+      actions.append(upload); section.append(actions);
+    }
+    if (!["sent", "discarded", "uploading"].includes(status)) {
+      const discard = button(["queued", "blocked"].includes(status) ? "Cancel queued upload; keep locally" : "Keep locally; skip upload", () => this._sessionAction("discard"), "action");
+      discard.id = "discard-session"; discard.disabled = busy;
+      section.append(discard, node("p", "Kept recordings remain available here for 90 days. This does not remove an activity already in Garmin.", "muted small"));
+    }
+    if (this._actionResultSession === session.session_id) {
+      if (this._actionError) section.append(this._notice("Session action failed", this._actionError, "error"));
+      else if (this._actionMessage) { const message = node("p", this._actionMessage, "muted small"); message.setAttribute("role", "status"); section.append(message); }
+    }
+    return section;
   }
 
   _fitComparison(session, samples, fit) {
