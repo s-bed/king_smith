@@ -1,5 +1,6 @@
 """Walking Pad Api."""
 import asyncio
+from contextlib import suppress
 import logging
 import time
 import statistics
@@ -169,10 +170,8 @@ class WalkingPadApi:
         """Disconnect the device."""
         lock = self._begin_cmd()
         async with lock:
-            try:
+            with suppress(Exception):
                 await self._ctrl.disconnect()
-            except Exception:
-                pass
             self._connected = False
             await self._end_cmd()
 
@@ -247,9 +246,7 @@ class WalkingPadApi:
                 await self._ctrl.ask_stats()
             except Exception as e:
                 _LOGGER.debug("Walking Pad is not responding (disconnecting): %s", e)
-                try:
+                with suppress(Exception):
                     await self._ctrl.disconnect()
-                except Exception:
-                    pass
                 self._connected = False
                 # Skip callback so we don't reset debouncer

@@ -41,11 +41,13 @@ Development builds of this fork are published as GitHub prereleases from the `de
 
 1. Add `https://github.com/s-bed/king_smith` as a custom repository in HACS with the **Integration** category if it is not already added. Make sure you are downloading this fork rather than `indiefan/king_smith`.
 1. Open **King Smith** in HACS, open its menu, and refresh its information.
-1. Choose **Redownload**, enable **Show beta versions** (or the repository's prerelease option), and select **0.1.3-dev.1**.
+1. Choose **Redownload**, enable **Show beta versions** (or the repository's prerelease option), and select **0.1.3-dev.2**.
 1. Download it and restart Home Assistant.
 1. Go to **Settings > Devices & services > Add integration > King Smith Walking Pad** to configure it.
 
 When publishing another development build, use a new prerelease version in `manifest.json` and publish a GitHub prerelease with that same tag from the development branch. A branch or tag alone does not make a selectable HACS release.
+
+The `0.1.3-dev.2` build includes the [six changes from Hypfer's fork](https://github.com/Hypfer/king_smith/compare/7e01359fdaed684dbc768678a591c845b67cf61d...a299c3ccbb76c814a335f29140b59dc32188d124): cadence averaged over the last ten readings, R1 Pro Bluetooth discovery, `ph4-walkingpad>=1.0.2`, one shared command lock, polling every five seconds through the coordinator, and quieter offline/disconnection handling. It also includes the sensor docstring fixes and explicit HACS branch/download settings from those commits. Manual setup remains available.
 
 ## Verified Supported Models
 
