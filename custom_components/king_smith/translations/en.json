@@ -1,0 +1,23 @@
+{
+    "config": {
+        "step": {
+            "device": {
+                "title": "Set up Walking Pad",
+                "description": "Enter a name and the Walking Pad's Bluetooth MAC address. Turn on the Walking Pad and disconnect it from the mobile app before continuing.",
+                "data": {
+                    "name": "Name",
+                    "mac": "Bluetooth MAC address"
+                }
+            }
+        },
+        "abort": {
+            "already_configured": "This Walking Pad is already configured."
+        }
+    },
+    "device_automation": {
+        "trigger_type": {
+            "session_start": "Session Started",
+            "session_done": "Session Completed"
+        }
+    }
+}

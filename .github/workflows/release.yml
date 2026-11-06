@@ -11,25 +11,43 @@ jobs:
   release:
     name: "Release"
     runs-on: "ubuntu-latest"
+    timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: "Checkout the repository"
-        uses: "actions/checkout@v4.1.1"
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
-      - name: "Adjust version number"
-        shell: "bash"
+      - name: "Build integration ZIP"
+        shell: python
         run: |
-          yq -i -o json '.version="${{ github.event.release.tag_name }}"' \
-            "${{ github.workspace }}/custom_components/king_smith/manifest.json"
+          import json
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
 
-      - name: "ZIP the integration directory"
-        shell: "bash"
-        run: |
-          cd "${{ github.workspace }}/custom_components/king_smith"
-          zip king_smith.zip -r ./
+          integration = Path("custom_components/king_smith")
+          manifest = json.loads((integration / "manifest.json").read_text())
+          manifest["version"] = os.environ["RELEASE_TAG"].removeprefix("v")
+          archive_path = Path(os.environ["RUNNER_TEMP"]) / "king_smith.zip"
+          with ZipFile(archive_path, "w", ZIP_DEFLATED) as archive:
+              for path in sorted(integration.rglob("*")):
+                  if not path.is_file() or "__pycache__" in path.parts:
+                      continue
+                  if path.suffix in {".pyc", ".pyo"}:
+                      continue
+                  relative = path.relative_to(integration).as_posix()
+                  if relative == "manifest.json":
+                      archive.writestr(relative, json.dumps(manifest, indent=4) + "\n")
+                  else:
+                      archive.write(path, relative)
 
       - name: "Upload the ZIP file to the release"
-        uses: softprops/action-gh-release@v0.1.15
-        with:
-          files: ${{ github.workspace }}/custom_components/king_smith/king_smith.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/king_smith.zip" --clobber

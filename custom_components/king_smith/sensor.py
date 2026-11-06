@@ -53,8 +53,45 @@ async def async_setup_entry(
             totalTimeEntity,
             totalStepsEntity,
             stepCadenceEntity,
+            RecorderSensor(treadmillName, walking_pad_api, data["session_manager"], config_entry.entry_id, False),
+            RecorderSensor(treadmillName, walking_pad_api, data["session_manager"], config_entry.entry_id, True),
         ]
     )
+
+
+class RecorderSensor(SensorEntity):
+    """Expose local recording health even while the treadmill is offline."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, name, api, manager, entry_id, pending) -> None:
+        """Create a persistent recorder status or pending count sensor."""
+        self._manager = manager
+        self._entry_id = entry_id
+        self._pending = pending
+        self._attr_name = "Pending sessions" if pending else "Recorder state"
+        self._attr_unique_id = f"{api.mac}_{'pending_sessions' if pending else 'recorder_state'}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, api.mac)}, "name": name, "manufacturer": "King Smith",
+        }
+
+    async def async_added_to_hass(self) -> None:
+        """Listen for local session changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._manager.subscribe(self._entry_id, self.async_write_ha_state))
+
+    @property
+    def native_value(self):
+        """Return recorder state or the number of unresolved sessions."""
+        if self._pending:
+            return self._manager.pending_count(self._entry_id)
+        return self._manager.recorder_state(self._entry_id)
+
+    @property
+    def extra_state_attributes(self):
+        """Expose storage trouble without placing activity histories in HA states."""
+        return {"storage_error": self._manager.last_error}
 
 
 class DistanceSensor(WalkingPadEntity, SensorEntity):
@@ -71,6 +108,7 @@ class DistanceSensor(WalkingPadEntity, SensorEntity):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0.0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
 
@@ -109,6 +147,7 @@ class TimeSensor(WalkingPadEntity, SensorEntity):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
 
@@ -147,6 +186,7 @@ class SpeedSensor(WalkingPadEntity, SensorEntity):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0.0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
 
@@ -184,6 +224,7 @@ class StepsSensor(WalkingPadEntity, SensorEntity):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
 
@@ -215,18 +256,20 @@ class StepCadenceSensor(WalkingPadEntity, SensorEntity):
     _attr_has_entity_name = True
     _attr_suggested_display_precision = 1
     _attr_icon = "mdi:walk"
+
     def __init__(
         self,
         treadmillName: str,
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0.0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        self._state = self._walking_pad_api.step_cadence
+        self._state = self._walking_pad_api.step_cadence_mean
         self.async_write_ha_state()
 
     @property
@@ -261,6 +304,7 @@ class TotalDistanceSensor(WalkingPadEntity, RestoreSensor):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0.0
         self._last = 0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
@@ -320,6 +364,7 @@ class TotalTimeSensor(WalkingPadEntity, RestoreSensor):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0
         self._last = 0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)
@@ -378,6 +423,7 @@ class TotalStepsSensor(WalkingPadEntity, RestoreSensor):
         walking_pad_api: WalkingPadApi,
         coordinator: WalkingPadCoordinator,
     ) -> None:
+        """Init Sensor."""
         self._state = 0
         self._last = 0
         super().__init__(treadmillName, self.name, walking_pad_api, coordinator)

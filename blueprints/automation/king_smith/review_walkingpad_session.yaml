@@ -1,0 +1,259 @@
+blueprint:
+  name: Review a WalkingPad session before uploading to Garmin
+  description: |-
+    **Blueprint version: 1.0.0 (2026-11-06)**
+
+    Send a saved WalkingPad session to a selected Companion App device for
+    review. Upload sends its FIT file through Garmin Connect; Discard skips
+    Garmin and retains the local recording for 90 days. Short pauses are
+    merged by the integration. Interrupted recordings are clearly labelled.
+    Create one instance per WalkingPad. Requires King Smith 0.1.3 or
+    newer and a Garmin Connect integration with upload_activity support.
+
+    ## Compatibility
+
+    Version 1.0.0 preserves all inputs, defaults, triggers and actions from
+    the unversioned blueprint shipped with King Smith 0.1.3-dev.5. Existing
+    automations need no input changes. The blueprint name and filename stay
+    the same so existing automations can continue using it.
+
+    Blueprint versions are independent of King Smith integration versions.
+    Major versions document breaking input or behavior changes and migration
+    steps; minor versions add compatible features; patch versions contain
+    compatible fixes or documentation changes.
+
+    ## Changelog
+
+    ### 1.0.0 - 2026-11-06
+
+    - First explicitly versioned blueprint; adds these author-written release
+      notes and compatibility information.
+    - Changes the update source from the fixed 0.1.3-dev.5 tag to the main
+      branch so Home Assistant re-imports and Spook can discover future updates.
+    - No input names, selectors, defaults or automation behavior changed.
+
+    ## Updating
+
+    This source follows production updates. Read the changelog and keep a
+    backup before replacing an imported copy. If your copy was imported from
+    a fixed release tag, re-import once from the main source URL to follow
+    future updates. Spook may still show its general blueprint update warning
+    and content fingerprints; these notes provide the author's change history.
+  domain: automation
+  homeassistant:
+    min_version: 2023.8.0
+  source_url: https://github.com/s-bed/king_smith/blob/main/blueprints/automation/king_smith/review_walkingpad_session.yaml
+  input:
+    walkingpad_device:
+      name: WalkingPad
+      selector:
+        device:
+          integration: king_smith
+    notification_device:
+      name: Phone to notify
+      description: A device registered with the Home Assistant Companion App.
+      selector:
+        device:
+          integration: mobile_app
+    garmin_entity:
+      name: Garmin account
+      description: Select a Garmin Connect sensor belonging to the destination account.
+      selector:
+        entity:
+          integration: garmin_connect
+          domain: sensor
+    minimum_moving_seconds:
+      name: Minimum walking duration
+      description: >-
+        Notify only when moving time reaches this threshold. All walks are
+        still recorded locally, including shorter walks.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 3600
+          step: 1
+          unit_of_measurement: s
+          mode: box
+
+mode: queued
+max: 100
+max_exceeded: warning
+
+trigger:
+  - platform: event
+    event_type: king_smith_session_ready
+    event_data:
+      device_id: !input walkingpad_device
+    id: session_ready
+  - platform: event
+    event_type: king_smith_session_updated
+    event_data:
+      device_id: !input walkingpad_device
+    id: session_updated
+  - platform: event
+    event_type: king_smith_recorder_ready
+    id: recorder_ready
+  - platform: homeassistant
+    event: start
+    id: startup
+  - platform: event
+    event_type: mobile_app_notification_action
+    id: mobile_action
+
+variables:
+  pad_device: !input walkingpad_device
+  phone_device: !input notification_device
+  minimum_seconds: !input minimum_moving_seconds
+  trigger_kind: "{{ trigger.id if trigger is defined and trigger.id is defined else 'refresh' }}"
+  action_prefix: "{{ 'KING_SMITH|' ~ pad_device ~ '|' }}"
+  phone_source_ids: >-
+    {{ [phone_device] + (device_attr(phone_device, 'identifiers') | default([], true)
+       | selectattr(0, 'equalto', 'mobile_app') | map(attribute=1) | list) }}
+  notification_action: >-
+    {{ trigger.event.data.get('action', '') if trigger_kind == 'mobile_action' else '' }}
+  action_parts: "{{ notification_action.split('|') }}"
+  requested_session_id: >-
+    {% if trigger_kind == 'mobile_action' and action_parts | length == 4 %}
+      {{ action_parts[2] }}
+    {% elif trigger_kind in ['session_ready', 'session_updated'] %}
+      {{ trigger.event.data.get('session_id', '') }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+
+condition:
+  - condition: template
+    value_template: >-
+      {% if trigger_kind == 'mobile_action' %}
+        {{ notification_action.startswith(action_prefix)
+           and action_parts | length == 4
+           and action_parts[3] in ['upload', 'retry', 'discard']
+           and trigger.event.data.get('device_id', trigger.event.data.get('sourceDeviceID', ''))
+               in phone_source_ids }}
+      {% else %}
+        {{ true }}
+      {% endif %}
+
+action:
+  # An HA-start event can race integration setup. The recorder-ready event
+  # retries restoration once its public services have been registered.
+  - service: king_smith.list_sessions
+    data:
+      device_id: !input walkingpad_device
+    response_variable: session_result
+    continue_on_error: true
+  - variables:
+      saved_sessions: "{{ session_result.sessions if session_result is defined else [] }}"
+      selected_session: >-
+        {{ saved_sessions | selectattr('session_id', 'equalto', requested_session_id)
+           | list | first | default({}) }}
+  - choose:
+      - conditions: >-
+          {{ trigger_kind == 'mobile_action'
+             and selected_session != {}
+             and selected_session.moving_seconds | float(0) >= minimum_seconds | float(60) }}
+        sequence:
+          - choose:
+              - conditions: >-
+                  {{ (action_parts[3] == 'upload'
+                      and selected_session.status in ['awaiting_review', 'failed_local'])
+                     or (action_parts[3] == 'retry'
+                         and selected_session.status == 'needs_review') }}
+                sequence:
+                  - service: king_smith.upload_session
+                    data:
+                      device_id: !input walkingpad_device
+                      session_id: "{{ requested_session_id }}"
+                      garmin_entity_id: !input garmin_entity
+                      retry: "{{ action_parts[3] == 'retry' }}"
+                    continue_on_error: true
+              - conditions: >-
+                  {{ action_parts[3] == 'discard'
+                     and selected_session.status in ['awaiting_review', 'failed_local',
+                         'needs_review', 'queued', 'blocked'] }}
+                sequence:
+                  - service: king_smith.discard_session
+                    data:
+                      device_id: !input walkingpad_device
+                      session_id: "{{ requested_session_id }}"
+                    continue_on_error: true
+          # Always re-read: an old notification may refer to a session that
+          # has already been sent/discarded or changed state during a tap.
+          - service: king_smith.list_sessions
+            data:
+              device_id: !input walkingpad_device
+            response_variable: session_result
+          - variables:
+              saved_sessions: "{{ session_result.sessions }}"
+  - variables:
+      notification_sessions: >-
+        {% if requested_session_id %}
+          {{ saved_sessions | selectattr('session_id', 'equalto', requested_session_id) | list }}
+        {% else %}
+          {{ saved_sessions | rejectattr('status', 'in', ['sent', 'discarded']) | list }}
+        {% endif %}
+  - repeat:
+      for_each: "{{ notification_sessions }}"
+      sequence:
+        - variables:
+            session: "{{ repeat.item }}"
+            notification_tag: "{{ 'king_smith_' ~ pad_device ~ '_' ~ session.session_id }}"
+            session_action_prefix: "{{ action_prefix ~ session.session_id ~ '|' }}"
+        - choose:
+            - conditions: "{{ session.status in ['sent', 'discarded'] }}"
+              sequence:
+                - device_id: !input notification_device
+                  domain: mobile_app
+                  type: notify
+                  message: clear_notification
+                  data:
+                    tag: "{{ notification_tag }}"
+            - conditions: >-
+                {{ session.moving_seconds | float(0) >= minimum_seconds | float(60) }}
+              sequence:
+                - variables:
+                    notification_actions: >-
+                      {% if session.status == 'needs_review' %}
+                        {{ [{'action': session_action_prefix ~ 'retry',
+                             'title': 'Checked Garmin: retry', 'authenticationRequired': true},
+                            {'action': session_action_prefix ~ 'discard',
+                             'title': 'Discard', 'authenticationRequired': true}] }}
+                      {% elif session.status in ['queued', 'blocked'] %}
+                        {{ [{'action': session_action_prefix ~ 'discard',
+                             'title': 'Cancel upload (keep local)', 'authenticationRequired': true}] }}
+                      {% elif session.status == 'uploading' %}
+                        {{ [] }}
+                      {% else %}
+                        {{ [{'action': session_action_prefix ~ 'upload',
+                             'title': 'Upload', 'authenticationRequired': true},
+                            {'action': session_action_prefix ~ 'discard',
+                             'title': 'Discard', 'authenticationRequired': true}] }}
+                      {% endif %}
+                - device_id: !input notification_device
+                  domain: mobile_app
+                  type: notify
+                  title: "{{ 'WalkingPad session: ' ~ session.name }}"
+                  message: >-
+                    {{ (session.moving_seconds / 60) | round(1) }} min moving,
+                    {{ (session.distance_m / 1000) | round(2) }} km,
+                    {{ session.steps }} steps.
+                    {% if session.quality_notes | default([]) | length %}
+                      Recording notes: {{ session.quality_notes | join(' ') }}
+                    {% elif session.partial %}
+                      Recording was flagged for review. Open WalkingPad sessions in Home Assistant for its quality reasons.
+                    {% endif %}
+                    {% if session.status == 'needs_review' %}
+                      Upload outcome is uncertain. Check Garmin before retrying to avoid a duplicate.
+                    {% elif session.status == 'blocked' %}
+                      Upload approved; waiting for the selected Garmin account to become available.
+                    {% elif session.status in ['queued', 'uploading'] %}
+                      Upload {{ 'in progress' if session.status == 'uploading' else 'queued' }}.
+                    {% elif session.status == 'failed_local' %}
+                      The activity file could not be prepared. Upload will retry preparing it.
+                    {% else %}
+                      Upload to Garmin, or Discard to keep this recording locally without uploading.
+                    {% endif %}
+                  data:
+                    tag: "{{ notification_tag }}"
+                    actions: "{{ notification_actions }}"

@@ -9,6 +9,9 @@
             "local_name": "KS-ST-*"
         },
         {
+            "local_name": "R1 Pro"
+        },
+        {
             "local_name": "WalkingPad"
         }
     ],
@@ -17,14 +20,18 @@
     ],
     "config_flow": true,
     "dependencies": [
-        "bluetooth"
+        "bluetooth",
+        "frontend",
+        "panel_custom"
     ],
     "documentation": "https://github.com/indiefan/king_smith",
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/indiefan/king_smith/issues",
     "requirements": [
         "bleak>=0.18.0",
-        "ph4-walkingpad>=0.0.7"
+        "ph4-walkingpad>=1.0.2",
+        "garmin-fit-sdk==21.221.0",
+        "voluptuous>=0.13.1"
     ],
-    "version": "0.1.2"
+    "version": "0.1.3"
 }

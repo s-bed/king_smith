@@ -1,10 +1,9 @@
 """Provides device automations for Walking Pad events."""
 from __future__ import annotations
 
-import voluptuous as vol
 
 from homeassistant.components.device_automation import DEVICE_TRIGGER_BASE_SCHEMA
-from homeassistant.components.homeassistant.triggers.event import event_trigger
+from homeassistant.components.homeassistant.triggers import event as event_trigger
 from homeassistant.const import (
     CONF_DEVICE_ID,
     CONF_DOMAIN,
@@ -14,7 +13,6 @@ from homeassistant.const import (
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 from homeassistant.helpers import (
     config_validation as cv,
-    entity_registry as er,
 )
 from homeassistant.helpers.trigger import TriggerActionType, TriggerInfo
 from homeassistant.helpers.typing import ConfigType
@@ -27,6 +25,7 @@ from .const import (
     EVENT_SESSION_DONE,
     EVENT_SESSION_START,
 )
+from .schema_compat import vol
 
 
 TRIGGER_TYPES = {SESSION_START, SESSION_DONE}
@@ -53,14 +52,12 @@ async def async_get_triggers(
         CONF_DEVICE_ID: device_id,
     }
 
-    registry = er.async_get(hass)
     return [
         {
             **trigger,
-            CONF_TYPE: SESSION_DONE,
+            CONF_TYPE: kind,
         }
-        for entry in er.async_entries_for_device(registry, device_id)
-        if entry.domain == DOMAIN
+        for kind in sorted(TRIGGER_TYPES)
     ]
 
 
@@ -74,15 +71,9 @@ async def async_attach_trigger(
     event_config = event_trigger.TRIGGER_SCHEMA(
         {
             event_trigger.CONF_PLATFORM: "event",
-            event_trigger.CONF_EVENT_TYPE: EVENT_SESSION_DONE,
-            event_trigger.CONF_EVENT_DATA: {
-                CONF_DEVICE_ID: config[CONF_DEVICE_ID],
-                CONF_TYPE: config[CONF_TYPE],
-            },
-        },
-        {
-            event_trigger.CONF_PLATFORM: "event",
-            event_trigger.CONF_EVENT_TYPE: EVENT_SESSION_START,
+            event_trigger.CONF_EVENT_TYPE: (
+                EVENT_SESSION_START if config[CONF_TYPE] == SESSION_START else EVENT_SESSION_DONE
+            ),
             event_trigger.CONF_EVENT_DATA: {
                 CONF_DEVICE_ID: config[CONF_DEVICE_ID],
                 CONF_TYPE: config[CONF_TYPE],

@@ -10,7 +10,7 @@
 
 Custom integration to connect Home Assistant with [King Smith Walking Pads][king_smith].
 
-Currently this integration adds a switch for main belt and a number entity to control/monitor the belt speed (in mph).
+This integration adds a belt switch, a speed control, walking sensors, and a persistent session recorder. Speed and distance use metric native units and Home Assistant can display them in your preferred units.
 
 This integration discovers/connects to the device using bluetooth (you may need to configure a bluetooth proxy like an ESP32).
 
@@ -29,7 +29,75 @@ In order for the device to be connected to HA, it must not be connected to anoth
 1. Click on `Settings` and then `Devices & services`
 1. If the treadmill is on and not currently connected to another device, it should show up in the `Discovered` list. Click `configure` and give it a name.
 
+You can also add it manually: go to **Settings > Devices & services > Add integration**, search for **King Smith Walking Pad**, and enter a name and the treadmill's Bluetooth MAC address (for example, `AA:BB:CC:DD:EE:FF`). The treadmill must be powered on and reachable through Home Assistant's Bluetooth adapter or a Bluetooth proxy.
+
+If you see `not_implemented` when adding the integration, update the files in `custom_components/king_smith/` (including the `translations` directory) from this repository and restart Home Assistant before trying again.
+
 ## Configuration is done in the UI
+
+## Production release in HACS
+
+The production release of this fork is **0.1.3**, published from `main`. It includes the session recorder, Garmin review notifications, and the native session panel described below. HACS lists published releases, not arbitrary branches.
+
+1. Add `https://github.com/s-bed/king_smith` as a custom repository in HACS with the **Integration** category if it is not already added. Make sure you are downloading this fork rather than `indiefan/king_smith`.
+1. Open **King Smith** in HACS, open its menu, and refresh its information.
+1. Choose **Redownload** and select **0.1.3**. Beta versions are not required for this production release.
+1. Download it and restart Home Assistant.
+1. Go to **Settings > Devices & services > Add integration > King Smith Walking Pad** to configure it.
+
+Development builds are published separately as GitHub prereleases from `dev`; enable **Show beta versions** only if you want those builds. When publishing another development build, use a new prerelease version in `manifest.json` and publish a GitHub prerelease with that same tag from the development branch. A branch or tag alone does not make a selectable HACS release. The blueprint import and update links below follow production `main`.
+
+The `0.1.3-dev.2` build includes the [six changes from Hypfer's fork](https://github.com/Hypfer/king_smith/compare/7e01359fdaed684dbc768678a591c845b67cf61d...a299c3ccbb76c814a335f29140b59dc32188d124): cadence averaged over the last ten readings, R1 Pro Bluetooth discovery, `ph4-walkingpad>=1.0.2`, one shared command lock, polling every five seconds through the coordinator, and quieter offline/disconnection handling. It also includes the sensor docstring fixes and explicit HACS branch/download settings from those commits. Manual setup remains available.
+
+## Session recording and Garmin review
+
+Starting with `0.1.3-dev.3`, observed belt movement records sessions automatically. Stops shorter than two minutes are merged into the same activity, with paused time excluded from moving time. A longer stop saves the activity using the observed stop time. If Bluetooth data disappears for two minutes, the recorder saves an interrupted activity through the last received sample. A session first observed while already moving is marked partial because its earlier data was not recorded.
+
+Sessions include timestamps, moving/elapsed duration, distance, steps, speed and cadence samples. The integration saves JSON and indoor-walking FIT files in `walkingpad_sessions/<entry_id>/` inside your Home Assistant configuration directory. Active recording is checkpointed regularly and recovered after restarts. Files stay outside the public `www` directory. Your normal configuration backups may contain these fitness recordings.
+
+The **Recorder state** and **Pending sessions** sensors show recording and review progress. Saved sessions can be inspected using **Developer tools > Actions > King Smith: List saved WalkingPad sessions**. Supply the WalkingPad device; the response includes each session UUID, summary and status. The upload/discard actions use that UUID rather than accepting an arbitrary file path.
+
+### Install the phone review blueprint
+
+HACS installs the integration files. Import this blueprint separately after updating and restarting Home Assistant:
+
+[![Import WalkingPad review blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fs-bed%2Fking_smith%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fking_smith%2Freview_walkingpad_session.yaml)
+
+[Open the blueprint source and changelog](https://github.com/s-bed/king_smith/blob/main/blueprints/automation/king_smith/review_walkingpad_session.yaml)
+
+The blueprint has its own version, **1.0.0**, shown with an author-written changelog and compatibility notes in its description. This version preserves the inputs, defaults and automation behavior from the unversioned blueprint in `0.1.3-dev.5`; existing automations need no input changes. Future breaking changes will use a new major blueprint version and include migration steps.
+
+The import link follows the production `main` branch so Home Assistant re-imports and Spook can discover future production updates. Copies imported from a fixed tag such as `0.1.3-dev.5` stay pinned there; re-import once using the link above to follow updates, keeping the existing blueprint filename. Keep a backup of your imported copy and read the changelog before updating.
+
+Spook's “Blueprints carry no changelog” text is a general warning: Home Assistant has no native blueprint version or changelog fields, so Spook compares content fingerprints and files. The version and changelog here live in the supported blueprint description; they do not remove Spook's warning or replace its compatibility checks. See [Spook's blueprint update documentation](https://spook.boo/blueprint/).
+
+1. Ensure the Home Assistant Companion App is registered and allowed to receive notifications on the phone you want to use.
+1. Install/configure Garmin Connect with activity upload support. This feature targets the installed Garmin Connect `3.0.21` actions.
+1. Import the blueprint and create one automation per WalkingPad.
+1. Select the WalkingPad, notification phone, and a Garmin Connect sensor belonging to the destination account.
+1. Leave the minimum moving duration at **60 seconds**, or change it. Shorter walks are still saved locally.
+
+After a qualifying session is saved, the selected phone receives its moving duration, distance and steps. Recording notes explain the specific quality flags. Choose **Upload** to approve its FIT upload to the selected Garmin account, or **Discard** to skip Garmin while keeping the local recording. Review notifications are restored after a Home Assistant restart; they use saved session IDs, so old buttons do not create fresh uploads.
+
+King Smith reuses the existing Garmin Connect login through its public upload action and stores no additional Garmin credentials. Missing Garmin services or an unloaded account leave an approved upload waiting. If an upload outcome is uncertain, the notification asks you to check Garmin before choosing **Checked Garmin: retry**. Repeated button taps are handled idempotently. The Garmin action confirms acceptance but does not return an activity ID, so uncertain uploads are never automatically resent.
+
+Uploaded and discarded recordings are retained for **90 days after resolution**, then cleaned up locally. Unresolved sessions and upload failures are retained until resolved. **Discard** does not delete a Garmin activity or cancel an upload already in progress. It only marks the local session as excluded from upload.
+
+The FIT file contains the recorded indoor walking data, including separate moving/elapsed time and pauses. No GPS route, heart rate or calories are invented. Bluetooth sampling is normally around five seconds, so very short transitions and missing packets limit timing precision. Decoder and automated tests verify the file structure; physical treadmill recording and Garmin's displayed interpretation still need live validation after installation.
+
+### Browse sessions and download FIT files
+
+Starting with `0.1.3-dev.4`, administrators can open **WalkingPad sessions** in the Home Assistant sidebar. The integration installs this panel automatically; no separate dashboard card or frontend repository is needed. Restart Home Assistant after updating and refresh the browser if the sidebar entry has not appeared.
+
+Filter the session list by WalkingPad or upload status, select a recording, and inspect its source metrics, actual decoded FIT summary, speed/cadence charts, and exact recording-quality reasons. **Download FIT** retrieves the original saved activity bytes; **Download JSON** retrieves its recorded samples. Session data and downloads use Home Assistant's authenticated administrator connection. Only the panel's application code is served as a static resource; activity files remain outside `www`.
+
+Starting with `0.1.3-dev.5`, the selected session also has **Upload to Garmin** and **Keep locally** controls. Select the destination Garmin account before uploading. An unavailable account or upload action leaves your approved upload queued until it recovers. Upload progress updates in the panel; an upload already being sent cannot be cancelled. After an uncertain upload, check Garmin and confirm that the activity is absent before explicitly retrying. Sent or locally retained sessions do not offer a fresh upload button.
+
+Import the updated review blueprint again to receive the specific recording notes in phone notifications; an existing automation keeps the older blueprint's message until its blueprint is updated.
+
+A normal counter reset at a stop or restart is informational and no longer marks a recording partial. A reset while walking, missing start, Bluetooth gap, unexpected counter jump, or connection loss still marks a recording partial. Older sessions whose only quality flag is `counter_reset` also stop showing a partial badge; their note explains the older classification. The original `recorded_partial` value is available in `list_sessions` responses, and downloaded JSON/FIT files remain unchanged. A missing-samples note can affect graph detail even when cumulative distance and step totals are recoverable. Neither note means optional heart-rate or GPS values were expected.
+
+Garmin's **Total Time** corresponds to the FIT timer duration; its **Moving Time** can be recalculated from samples. Walking steps are encoded as strides plus a fractional stride for odd totals. Some Garmin views can round an odd step count down by one. The panel shows the saved JSON and decoded FIT values separately so these display differences are visible.
 
 ## Verified Supported Models
 
@@ -53,5 +121,5 @@ If you want to contribute to this please read the [Contribution guidelines](CONT
 [forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
 [forum]: https://community.home-assistant.io/
 [license-shield]: https://img.shields.io/github/license/indiefan/king_smith.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/indiefan/king_smith.svg?style=for-the-badge
-[releases]: https://github.com/indiefan/king_smith/releases
+[releases-shield]: https://img.shields.io/github/release/s-bed/king_smith.svg?style=for-the-badge
+[releases]: https://github.com/s-bed/king_smith/releases
