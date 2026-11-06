@@ -35,17 +35,17 @@ If you see `not_implemented` when adding the integration, update the files in `c
 
 ## Configuration is done in the UI
 
-## Development releases in HACS
+## Production release in HACS
 
-Development builds of this fork are published as GitHub prereleases from the `dev` branch. HACS lists published releases, not arbitrary branches.
+The production release of this fork is **0.1.3**, published from `main`. It includes the session recorder, Garmin review notifications, and the native session panel described below. HACS lists published releases, not arbitrary branches.
 
 1. Add `https://github.com/s-bed/king_smith` as a custom repository in HACS with the **Integration** category if it is not already added. Make sure you are downloading this fork rather than `indiefan/king_smith`.
 1. Open **King Smith** in HACS, open its menu, and refresh its information.
-1. Choose **Redownload**, enable **Show beta versions** (or the repository's prerelease option), and select **0.1.3-dev.5**.
+1. Choose **Redownload** and select **0.1.3**. Beta versions are not required for this production release.
 1. Download it and restart Home Assistant.
 1. Go to **Settings > Devices & services > Add integration > King Smith Walking Pad** to configure it.
 
-When publishing another development build, use a new prerelease version in `manifest.json` and publish a GitHub prerelease with that same tag from the development branch. A branch or tag alone does not make a selectable HACS release.
+Development builds are published separately as GitHub prereleases from `dev`; enable **Show beta versions** only if you want those builds. When publishing another development build, use a new prerelease version in `manifest.json` and publish a GitHub prerelease with that same tag from the development branch. A branch or tag alone does not make a selectable HACS release. The blueprint import and update links below follow production `main`.
 
 The `0.1.3-dev.2` build includes the [six changes from Hypfer's fork](https://github.com/Hypfer/king_smith/compare/7e01359fdaed684dbc768678a591c845b67cf61d...a299c3ccbb76c814a335f29140b59dc32188d124): cadence averaged over the last ten readings, R1 Pro Bluetooth discovery, `ph4-walkingpad>=1.0.2`, one shared command lock, polling every five seconds through the coordinator, and quieter offline/disconnection handling. It also includes the sensor docstring fixes and explicit HACS branch/download settings from those commits. Manual setup remains available.
 
@@ -61,9 +61,15 @@ The **Recorder state** and **Pending sessions** sensors show recording and revie
 
 HACS installs the integration files. Import this blueprint separately after updating and restarting Home Assistant:
 
-[![Import WalkingPad review blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fs-bed%2Fking_smith%2Fblob%2F0.1.3-dev.5%2Fblueprints%2Fautomation%2Fking_smith%2Freview_walkingpad_session.yaml)
+[![Import WalkingPad review blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fs-bed%2Fking_smith%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fking_smith%2Freview_walkingpad_session.yaml)
 
-[Open the blueprint source](https://github.com/s-bed/king_smith/blob/0.1.3-dev.5/blueprints/automation/king_smith/review_walkingpad_session.yaml)
+[Open the blueprint source and changelog](https://github.com/s-bed/king_smith/blob/main/blueprints/automation/king_smith/review_walkingpad_session.yaml)
+
+The blueprint has its own version, **1.0.0**, shown with an author-written changelog and compatibility notes in its description. This version preserves the inputs, defaults and automation behavior from the unversioned blueprint in `0.1.3-dev.5`; existing automations need no input changes. Future breaking changes will use a new major blueprint version and include migration steps.
+
+The import link follows the production `main` branch so Home Assistant re-imports and Spook can discover future production updates. Copies imported from a fixed tag such as `0.1.3-dev.5` stay pinned there; re-import once using the link above to follow updates, keeping the existing blueprint filename. Keep a backup of your imported copy and read the changelog before updating.
+
+Spook's “Blueprints carry no changelog” text is a general warning: Home Assistant has no native blueprint version or changelog fields, so Spook compares content fingerprints and files. The version and changelog here live in the supported blueprint description; they do not remove Spook's warning or replace its compatibility checks. See [Spook's blueprint update documentation](https://spook.boo/blueprint/).
 
 1. Ensure the Home Assistant Companion App is registered and allowed to receive notifications on the phone you want to use.
 1. Install/configure Garmin Connect with activity upload support. This feature targets the installed Garmin Connect `3.0.21` actions.
@@ -115,5 +121,5 @@ If you want to contribute to this please read the [Contribution guidelines](CONT
 [forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
 [forum]: https://community.home-assistant.io/
 [license-shield]: https://img.shields.io/github/license/indiefan/king_smith.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/indiefan/king_smith.svg?style=for-the-badge
-[releases]: https://github.com/indiefan/king_smith/releases
+[releases-shield]: https://img.shields.io/github/release/s-bed/king_smith.svg?style=for-the-badge
+[releases]: https://github.com/s-bed/king_smith/releases
