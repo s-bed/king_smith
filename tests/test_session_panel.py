@@ -46,12 +46,20 @@ class SessionPanelTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         """Prepare a real HA instance with fake I/O and archive reads."""
         from homeassistant.components import frontend, panel_custom, websocket_api
+        from homeassistant.config_entries import ConfigEntries
         from homeassistant.core import HomeAssistant
+        from homeassistant.helpers import device_registry as dr, entity_registry as er
 
         from custom_components.king_smith import session_panel
 
         self.temporary = tempfile.TemporaryDirectory()
         self.hass = HomeAssistant(self.temporary.name)
+        self.hass.config_entries = ConfigEntries(self.hass, {})
+        # A bare HomeAssistant has neither config entries nor loaded registries.
+        # Startup loads devices before entities because entity migration waits
+        # for the device registry; mirror that prerequisite in this fixture.
+        await dr.async_load(self.hass)
+        await er.async_load(self.hass)
         self.hass.data["king_smith"] = {}
         self.hass.http = SimpleNamespace(async_register_static_paths=AsyncMock())
         self.summary = {
