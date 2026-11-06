@@ -26,5 +26,5 @@
         "bleak>=0.18.0",
         "ph4-walkingpad>=0.0.7"
     ],
-    "version": "0.1.2"
+    "version": "0.1.3-dev.1"
 }

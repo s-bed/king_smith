@@ -10,11 +10,22 @@ from homeassistant.helpers import device_registry
 
 from .const import DOMAIN
 
+
 class WalkingpadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Walkingpad."""
 
     VERSION = 0.1
     CONNECTION_CLASS = config_entries.CONN_CLASS_LOCAL_POLL
+
+    def __init__(self) -> None:
+        """Initialize the available device choices for this flow."""
+        self.devices: list[str] = []
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle setup started from Add integration."""
+        return await self.async_step_device(user_input)
 
     async def async_step_bluetooth(
         self, discovery_info: bluetooth.BluetoothServiceInfoBleak
@@ -32,7 +43,7 @@ class WalkingpadConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle setting up a device."""
-        if not user_input:
+        if user_input is None:
             schema_mac = str
             if self.devices:
                 schema_mac = vol.In(self.devices)

@@ -29,7 +29,23 @@ In order for the device to be connected to HA, it must not be connected to anoth
 1. Click on `Settings` and then `Devices & services`
 1. If the treadmill is on and not currently connected to another device, it should show up in the `Discovered` list. Click `configure` and give it a name.
 
+You can also add it manually: go to **Settings > Devices & services > Add integration**, search for **King Smith Walking Pad**, and enter a name and the treadmill's Bluetooth MAC address (for example, `AA:BB:CC:DD:EE:FF`). The treadmill must be powered on and reachable through Home Assistant's Bluetooth adapter or a Bluetooth proxy.
+
+If you see `not_implemented` when adding the integration, update the files in `custom_components/king_smith/` (including the `translations` directory) from this repository and restart Home Assistant before trying again.
+
 ## Configuration is done in the UI
+
+## Development releases in HACS
+
+Development builds of this fork are published as GitHub prereleases from the `dev` branch. HACS lists published releases, not arbitrary branches.
+
+1. Add `https://github.com/s-bed/king_smith` as a custom repository in HACS with the **Integration** category if it is not already added. Make sure you are downloading this fork rather than `indiefan/king_smith`.
+1. Open **King Smith** in HACS, open its menu, and refresh its information.
+1. Choose **Redownload**, enable **Show beta versions** (or the repository's prerelease option), and select **0.1.3-dev.1**.
+1. Download it and restart Home Assistant.
+1. Go to **Settings > Devices & services > Add integration > King Smith Walking Pad** to configure it.
+
+When publishing another development build, use a new prerelease version in `manifest.json` and publish a GitHub prerelease with that same tag from the development branch. A branch or tag alone does not make a selectable HACS release.
 
 ## Verified Supported Models
 
