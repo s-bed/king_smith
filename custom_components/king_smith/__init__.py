@@ -22,6 +22,16 @@ PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
 _LOGGER = logging.getLogger(__name__)
 
 
+def _registered_address(registry, entry_id: str, fallback: str) -> str:
+    """Preserve the exact identifier used by existing device and entity records."""
+    for device in registry.devices.values():
+        if entry_id in device.config_entries:
+            for domain, identifier in device.identifiers:
+                if domain == DOMAIN:
+                    return identifier
+    return fallback
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Load the durable recorder even when the treadmill is unavailable."""
     hass.data.setdefault(DOMAIN, {})
@@ -58,13 +68,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, entry.data.get(CONF_MAC), connectable=True
     )
     name = entry.data.get(CONF_NAME) or DOMAIN
+    registry = dr.async_get(hass)
+    identity_address = _registered_address(
+        registry, entry.entry_id, ble_device.address if ble_device else address
+    )
     walking_pad = WalkingPadApi(
-        name, ble_device, address=address,
+        name, ble_device, address=identity_address,
         device_resolver=lambda: bluetooth.async_ble_device_from_address(
             hass, address, connectable=True
         ),
     )
-    device = dr.async_get(hass).async_get_or_create(
+    device = registry.async_get_or_create(
         config_entry_id=entry.entry_id, identifiers={(DOMAIN, walking_pad.mac)},
         name=name, manufacturer="King Smith",
     )

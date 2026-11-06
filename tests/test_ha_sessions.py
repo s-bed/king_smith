@@ -43,6 +43,23 @@ class HomeAssistantSessionTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.async_initialize()
         self.manager.attach("entry_one", "a" * 32, "Desk treadmill")
 
+    async def test_existing_device_identity_keeps_its_original_address_case(self):
+        """A lowercase config entry must not replace old uppercase entity IDs."""
+        from custom_components.king_smith import _registered_address
+
+        registry = SimpleNamespace(devices={"device": SimpleNamespace(
+            config_entries={"entry_one"},
+            identifiers={("king_smith", "AA:BB:CC:DD:EE:FF")},
+        )})
+        self.assertEqual(
+            _registered_address(registry, "entry_one", "aa:bb:cc:dd:ee:ff"),
+            "AA:BB:CC:DD:EE:FF",
+        )
+        self.assertEqual(
+            _registered_address(registry, "other_entry", "11:22:33:44:55:66"),
+            "11:22:33:44:55:66",
+        )
+
     async def asyncTearDown(self):
         """Flush recorder data and stop HA's background resources."""
         await self.manager.async_shutdown()
