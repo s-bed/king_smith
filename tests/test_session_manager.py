@@ -1,6 +1,7 @@
 """Exercise durable recording and upload approval through injected HA adapters."""
 
 import asyncio
+import base64
 from copy import deepcopy
 import importlib
 from pathlib import Path
@@ -454,6 +455,117 @@ class SessionManagerTests(unittest.IsolatedAsyncioTestCase):
         listed[0]["status"] = "sent"
         self.assertEqual(self.manager.sessions[session_id]["quality_flags"], [])
         self.assertEqual(self.manager.sessions[session_id]["status"], "awaiting_review")
+
+    async def test_inspection_lists_restored_pads_and_sessions_without_bluetooth(self):
+        """The session browser can inspect all saved pads while no device is connected."""
+        first = await self.finish_walk("entry", "pad", 0)
+        second = await self.finish_walk("entry2", "pad2", 300)
+        self.manager.attach("idle_entry", "idle_pad", "Idle treadmill")
+        await self.manager.async_tick()
+        recovered = await self.new_manager(FakeStore(self.store.data))
+        listed = recovered.list_all_sessions()
+        self.assertEqual([session["session_id"] for session in listed], [second, first])
+        devices = {device["device_id"]: device for device in recovered.list_devices()}
+        self.assertEqual(set(devices), {"pad", "pad2", "idle_pad"})
+        self.assertEqual(devices["pad"]["pending_sessions"], 1)
+        self.assertEqual(devices["idle_pad"]["pending_sessions"], 0)
+        self.assertTrue(all(device["recorder_state"] == "idle" for device in devices.values()))
+        listed[0]["quality_notes"].append("changed by browser")
+        listed[0]["name"] = "Browser-only label"
+        self.assertEqual(recovered.list_all_sessions()[0]["name"], "Desk walking")
+        self.assertEqual(recovered.list_all_sessions()[0]["quality_notes"], [])
+        self.assertEqual(self.hass.services.calls, [])
+
+    async def test_session_detail_reads_actual_fit_odd_steps_and_quality_reasons(self):
+        """Details retain odd steps encoded as a fractional stride and exact saved reasons."""
+        self.manager.attach("entry", "pad", "Desk walking")
+        await self.manager.async_receive("entry", StatusSample(_NOW, 0, 0, 0, 0))
+        for offset, steps, distance in ((5, 8, 10), (10, 16, 10), (15, 24, 20), (20, 32, 20), (25, 39, 30)):
+            await self.manager.async_receive(
+                "entry", StatusSample(_NOW + offset, offset, distance, steps, 0 if offset == 25 else 1)
+            )
+        active = self.manager.recorders["entry"].active
+        session_id = active["session_id"]
+        active.update(partial=True, quality_flags=["counter_reset"])
+        self.clock.return_value = _NOW + 145
+        await self.manager.async_tick()
+        detail = await self.manager.async_session_detail(session_id)
+        self.assertEqual(detail["session"]["steps"], 39)
+        self.assertEqual(detail["recording"]["steps"], 39)
+        self.assertEqual(detail["fit_summary"]["steps"], 39)
+        self.assertEqual(detail["fit_summary"]["distance_m"], 30)
+        self.assertEqual(detail["fit_summary"]["timer_seconds"], 25)
+        self.assertEqual(detail["fit_summary"]["elapsed_seconds"], 25)
+        self.assertEqual(detail["fit_summary"]["record_count"], 5)
+        self.assertEqual(detail["quality_details"][0]["code"], "counter_reset")
+        self.assertIn("counters", detail["quality_details"][0]["title"])
+        self.assertIsNone(detail["fit_error"])
+        self.assertIsNone(detail["recording_error"])
+        # A detail read never regenerates or mutates the source recording.
+        detail["recording"]["steps"] = 0
+        self.assertEqual((await self.manager.async_session_detail(session_id))["recording"]["steps"], 39)
+
+    async def test_session_downloads_are_identical_to_the_existing_archives(self):
+        """FIT and JSON downloads return the original bytes, not a reconstructed activity."""
+        session_id = await self.finish_walk()
+        json_path, fit_path = self.manager._paths(self.manager.sessions[session_id])
+        for file_format, path, mime in (
+            ("fit", fit_path, "application/octet-stream"),
+            ("json", json_path, "application/json"),
+        ):
+            with self.subTest(file_format=file_format):
+                result = await self.manager.async_session_download(session_id, file_format)
+                self.assertEqual(base64.b64decode(result["content"], validate=True), path.read_bytes())
+                self.assertEqual(result["filename"], f"walkingpad-{session_id}.{file_format}")
+                self.assertEqual(result["mime_type"], mime)
+        self.assertEqual(self.manager.sessions[session_id]["status"], "awaiting_review")
+        self.assertEqual(self.hass.services.calls, [])
+
+    async def test_unknown_or_pathlike_download_identifiers_never_reach_filesystem(self):
+        """Browser requests resolve saved UUIDs and fixed formats rather than user paths."""
+        session_id = await self.finish_walk()
+        with patch.object(self.hass, "async_add_executor_job", side_effect=AssertionError("Unexpected file access")):
+            for identifier in ("unknown", "../../configuration.yaml", "/config/secrets.yaml"):
+                with self.subTest(identifier=identifier):
+                    with self.assertRaises(SessionError):
+                        await self.manager.async_session_detail(identifier)
+                    with self.assertRaises(SessionError):
+                        await self.manager.async_session_download(identifier, "fit")
+            for file_format in ("../fit", "yaml", "/config/secrets.yaml"):
+                with self.subTest(file_format=file_format), self.assertRaises(SessionError):
+                    await self.manager.async_session_download(session_id, file_format)
+
+    async def test_tampered_fit_is_visible_as_an_error_and_cannot_be_downloaded(self):
+        """A failed FIT checksum keeps the source accessible without serving changed bytes."""
+        session_id = await self.finish_walk()
+        _, fit_path = self.manager._paths(self.manager.sessions[session_id])
+        fit_path.write_bytes(b"changed FIT contents")
+        detail = await self.manager.async_session_detail(session_id)
+        self.assertIsNone(detail["fit_summary"])
+        self.assertIn("validation", detail["fit_error"])
+        self.assertEqual(detail["recording"]["steps"], 16)
+        self.assertIsNone(detail["recording_error"])
+        with self.assertRaises(SessionError):
+            await self.manager.async_session_download(session_id, "fit")
+        self.assertEqual(self.hass.services.calls, [])
+
+    async def test_missing_source_retains_fit_and_summary_inspection(self):
+        """A lost JSON file does not hide a valid FIT or the saved session summary."""
+        session_id = await self.finish_walk()
+        json_path, fit_path = self.manager._paths(self.manager.sessions[session_id])
+        original_fit = fit_path.read_bytes()
+        json_path.unlink()
+        detail = await self.manager.async_session_detail(session_id)
+        self.assertEqual(detail["session"]["session_id"], session_id)
+        self.assertEqual(detail["session"]["steps"], 16)
+        self.assertEqual(detail["fit_summary"]["steps"], 16)
+        self.assertIsNone(detail["fit_error"])
+        self.assertIn("source recording", detail["recording_error"])
+        self.assertEqual(detail["recording"]["samples"], [])
+        downloaded = await self.manager.async_session_download(session_id, "fit")
+        self.assertEqual(base64.b64decode(downloaded["content"]), original_fit)
+        with self.assertRaises(SessionError):
+            await self.manager.async_session_download(session_id, "json")
 
 
 if __name__ == "__main__":

@@ -32,3 +32,6 @@ jobs:
 
         - name: "Test Walking Pad behavior"
           run: python3 -m unittest discover -s tests -v
+
+        - name: "Test native session panel"
+          run: node --test tests/test_panel_frontend.cjs

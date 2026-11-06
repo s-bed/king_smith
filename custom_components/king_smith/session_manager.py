@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Callable
 from contextlib import suppress
 from copy import deepcopy
@@ -15,6 +16,7 @@ from uuid import UUID
 
 from .fit_export import encode_session
 from .session_recorder import SessionRecorder, StatusSample
+from .session_inspection import inspect_fit, quality_details
 
 _LOGGER = logging.getLogger(__name__)
 RESOLVED = {"sent", "discarded"}
@@ -91,10 +93,89 @@ class SessionManager:
     def list_sessions(self, device_id: str, status: str | None = None) -> list[dict]:
         """Return summaries without exposing mutable internal records."""
         return sorted(
-            [deepcopy(s) for s in self.sessions.values()
+            [self._public_summary(s) for s in self.sessions.values()
              if s["device_id"] == device_id and (status is None or s["status"] == status)],
             key=lambda s: s["start_time"], reverse=True,
         )
+
+    def list_all_sessions(self) -> list[dict]:
+        """Return account-wide summaries for the administrator session browser."""
+        return sorted([self._public_summary(s) for s in self.sessions.values()], key=lambda s: s["start_time"], reverse=True)
+
+    @staticmethod
+    def _public_summary(session: dict) -> dict:
+        result = deepcopy(session)
+        result["quality_notes"] = [detail["description"] for detail in quality_details(session)]
+        return result
+
+    def list_devices(self) -> list[dict]:
+        """List live and restored recorders without requiring a connected pad."""
+        return [{
+            "entry_id": entry_id, "device_id": recorder.device_id,
+            "name": recorder.name, "recorder_state": recorder.state,
+            "pending_sessions": self.pending_count(entry_id),
+        } for entry_id, recorder in self.recorders.items()]
+
+    async def async_session_detail(self, session_id: str) -> dict:
+        """Inspect the archived source and actual FIT bytes without rewriting them."""
+        async with self._lock:
+            session = deepcopy(self._session_by_id(session_id))
+            source = deepcopy(self.pending_archives.get(session_id))
+        recording_error = None
+        if source is None:
+            try:
+                source = await self.hass.async_add_executor_job(self._read_source, session)
+            except (OSError, ValueError):
+                source = {"samples": [], "timer_events": []}
+                recording_error = "The saved source recording is unavailable or invalid."
+        fit_summary, fit_error = None, None
+        try:
+            fit_summary = await self.hass.async_add_executor_job(self._inspect_archive, session)
+        except (OSError, ValueError):
+            fit_error = "The saved FIT file is unavailable or failed validation."
+        return {
+            "session": session, "recording": source,
+            "quality_details": quality_details(session),
+            "fit_summary": fit_summary, "fit_error": fit_error,
+            "recording_error": recording_error,
+        }
+
+    async def async_session_download(self, session_id: str, file_format: str) -> dict:
+        """Return an existing session file only through an authenticated request."""
+        if file_format not in {"fit", "json"}:
+            raise SessionError("Choose FIT or JSON.")
+        async with self._lock:
+            session = deepcopy(self._session_by_id(session_id))
+        try:
+            return await self.hass.async_add_executor_job(self._download_archive, session, file_format)
+        except (OSError, ValueError) as err:
+            raise SessionError("The saved activity file is unavailable or invalid.") from err
+
+    def _session_by_id(self, session_id: str) -> dict:
+        session = self.sessions.get(session_id)
+        if session is None:
+            raise SessionError("Saved WalkingPad session not found.")
+        return session
+
+    def _inspect_archive(self, session: dict) -> dict:
+        encoded = self._paths(session)[1].read_bytes()
+        if hashlib.sha256(encoded).hexdigest() != session.get("fit_sha256"):
+            raise ValueError("Saved activity no longer matches its recorded checksum")
+        return inspect_fit(encoded)
+
+    def _download_archive(self, session: dict, file_format: str) -> dict:
+        json_path, fit_path = self._paths(session)
+        encoded = (fit_path if file_format == "fit" else json_path).read_bytes()
+        if file_format == "fit":
+            if hashlib.sha256(encoded).hexdigest() != session.get("fit_sha256"):
+                raise ValueError("Saved activity no longer matches its recorded checksum")
+        else:
+            self._read_source(session)
+        return {
+            "filename": f"walkingpad-{session['session_id']}.{file_format}",
+            "mime_type": "application/octet-stream" if file_format == "fit" else "application/json",
+            "content": base64.b64encode(encoded).decode("ascii"),
+        }
 
     async def async_receive(self, entry_id: str, sample: StatusSample) -> None:
         """Persist one immutable snapshot in arrival order."""

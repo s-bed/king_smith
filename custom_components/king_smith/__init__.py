@@ -16,6 +16,7 @@ from .coordinator import WalkingPadCoordinator
 from .walking_pad import WalkingPadApi
 from .session_manager import SessionManager
 from .session_services import register_session_services
+from .session_panel import async_setup_panel
 
 PLATFORMS: list[Platform] = [Platform.SWITCH, Platform.NUMBER, Platform.SENSOR]
 
@@ -47,6 +48,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data[DOMAIN]["session_manager"] = manager
     register_session_services(hass, manager)
     await manager.async_initialize()
+    await async_setup_panel(hass, manager)
     cancel_tick = async_track_time_interval(hass, manager.async_tick, timedelta(seconds=5))
 
     async def shutdown(_event):

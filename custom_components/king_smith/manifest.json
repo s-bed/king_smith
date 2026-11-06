@@ -20,7 +20,9 @@
     ],
     "config_flow": true,
     "dependencies": [
-        "bluetooth"
+        "bluetooth",
+        "frontend",
+        "panel_custom"
     ],
     "documentation": "https://github.com/indiefan/king_smith",
     "iot_class": "local_polling",
@@ -31,5 +33,5 @@
         "garmin-fit-sdk==21.221.0",
         "voluptuous>=0.13.1"
     ],
-    "version": "0.1.3-dev.3"
+    "version": "0.1.3-dev.4"
 }

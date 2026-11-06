@@ -187,6 +187,16 @@ class SessionBlueprintTests(unittest.TestCase):
         variables["session"]["moving_seconds"] = 30
         self.assertTrue(self.render(condition, variables))
 
+    def test_notification_explains_the_saved_quality_reason(self):
+        """A counter-reset note replaces the old unspecified missing-data warning."""
+        message = self.notification_branches()[1]["sequence"][-1]["message"]
+        variables = self.variables()
+        variables["session"] = self.session()
+        variables["session"].update(partial=True, quality_notes=["Device counters restarted; review the recorded totals."])
+        rendered = self.render(message, variables)
+        self.assertIn("Device counters restarted", rendered)
+        self.assertNotIn("some walking data was not captured", rendered)
+
     def test_ambiguous_upload_requires_explicit_retry_action(self):
         """A stale Upload tap cannot retry an uncertain network request."""
         action = self.blueprint["action"][2]["choose"][0]["sequence"][0]["choose"][0]
