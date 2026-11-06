@@ -1,0 +1,81 @@
+list_sessions:
+  name: List saved WalkingPad sessions
+  description: >-
+    Return saved session summaries and their review/upload status. This action
+    returns a sessions list; samples and FIT files remain in local storage.
+  fields:
+    device_id:
+      name: WalkingPad
+      required: true
+      selector:
+        device:
+          integration: king_smith
+    status:
+      name: Status
+      description: Leave empty to include all saved sessions for this WalkingPad.
+      selector:
+        select:
+          options:
+            - awaiting_review
+            - queued
+            - blocked
+            - uploading
+            - sent
+            - needs_review
+            - discarded
+            - failed_local
+
+upload_session:
+  name: Upload a saved WalkingPad session
+  description: >-
+    Approve a saved FIT activity for upload through the selected Garmin Connect
+    account. Repeated requests do not send the same session again. If an earlier
+    outcome is uncertain, check Garmin first and explicitly enable Retry.
+  fields:
+    device_id:
+      name: WalkingPad
+      required: true
+      selector:
+        device:
+          integration: king_smith
+    session_id:
+      name: Session ID
+      description: UUID returned by List saved WalkingPad sessions.
+      required: true
+      selector:
+        text:
+    garmin_entity_id:
+      name: Garmin account
+      description: A Garmin Connect sensor belonging to the destination account.
+      required: true
+      selector:
+        entity:
+          integration: garmin_connect
+          domain: sensor
+    retry:
+      name: Retry after checking Garmin
+      description: >-
+        Use only after verifying that an uncertain previous upload did not
+        create an activity in Garmin. Retrying can otherwise create a duplicate.
+      default: false
+      selector:
+        boolean:
+
+discard_session:
+  name: Discard a WalkingPad upload
+  description: >-
+    Skip Garmin upload and keep the recording locally for 90 days. This cannot
+    cancel an upload already in progress or remove an activity from Garmin.
+  fields:
+    device_id:
+      name: WalkingPad
+      required: true
+      selector:
+        device:
+          integration: king_smith
+    session_id:
+      name: Session ID
+      description: UUID returned by List saved WalkingPad sessions.
+      required: true
+      selector:
+        text:

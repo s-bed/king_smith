@@ -9,6 +9,8 @@ from bleak.backends.device import BLEDevice
 
 from ph4_walkingpad.pad import Controller, WalkingPad, WalkingPadCurStatus
 
+from .session_recorder import StatusSample
+
 STATUS_LOCK_ON_CMD_SECONDS = 5
 
 _LOGGER = logging.getLogger(__name__)
@@ -17,12 +19,15 @@ _LOGGER = logging.getLogger(__name__)
 class WalkingPadApi:
     """Walkingpad device."""
 
-    def __init__(self, name: str, ble_device: BLEDevice) -> None:
+    def __init__(self, name: str, ble_device: BLEDevice | None, address: str | None = None, device_resolver=None) -> None:
         """Create a new walking pad api instance."""
         self._name = name
         self._ble_device = ble_device
+        self._address = address or ble_device.address
+        self._device_resolver = device_resolver
         self._ctrl = Controller()
         self._callbacks = []
+        self._snapshot_callbacks = []
         self._status_lock = False
         self._last_cmd_time = time.time()
         self._cmd_lock = asyncio.Lock()
@@ -56,6 +61,12 @@ class WalkingPadApi:
 
     def _on_status_update(self, sender, status: WalkingPadCurStatus) -> None:
         """Update current state."""
+        snapshot = StatusSample(
+            timestamp=time.time(), duration_s=status.time,
+            distance_m=status.dist * 10, steps=status.steps, speed_mps=status.speed / 36,
+        )
+        for callback in tuple(self._snapshot_callbacks):
+            callback(snapshot)
         # Don't update if we're still running a command or just did (status from device is outdated at first)
         if (
             self._status_lock
@@ -108,10 +119,15 @@ class WalkingPadApi:
         """Register a status callback."""
         self._callbacks.append(callback)
 
+    def register_snapshot_callback(self, callback):
+        """Observe received packets before command/display suppression."""
+        self._snapshot_callbacks.append(callback)
+        return lambda: self._snapshot_callbacks.remove(callback)
+
     @property
     def mac(self):
         """Mac address."""
-        return self._ble_device.address
+        return self._address
 
     @property
     def name(self):
@@ -162,9 +178,16 @@ class WalkingPadApi:
         """Connect the device."""
         lock = self._begin_cmd()
         async with lock:
-            await self._ctrl.run(self._ble_device)
-            self._connected = True
-            await self._end_cmd()
+            try:
+                if not self._connected:
+                    if self._device_resolver is not None:
+                        self._ble_device = self._device_resolver()
+                    if self._ble_device is None:
+                        raise ConnectionError("WalkingPad is not currently reachable through Bluetooth")
+                    await self._ctrl.run(self._ble_device)
+                    self._connected = True
+            finally:
+                await self._end_cmd()
 
     async def disconnect(self) -> None:
         """Disconnect the device."""

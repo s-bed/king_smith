@@ -5,6 +5,8 @@ import importlib.util
 import logging
 from pathlib import Path
 from types import SimpleNamespace
+from types import ModuleType
+import sys
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -14,7 +16,10 @@ _SOURCE = (
     Path(__file__).resolve().parents[1]
     / "custom_components/king_smith/walking_pad.py"
 )
-_SPEC = importlib.util.spec_from_file_location("walking_pad_under_test", _SOURCE)
+_PACKAGE = ModuleType("walking_pad_tests")
+_PACKAGE.__path__ = [str(_SOURCE.parent)]
+sys.modules[_PACKAGE.__name__] = _PACKAGE
+_SPEC = importlib.util.spec_from_file_location("walking_pad_tests.walking_pad", _SOURCE)
 walking_pad = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(walking_pad)
 
@@ -111,6 +116,39 @@ class WalkingPadApiTests(unittest.IsolatedAsyncioTestCase):
         self.controller.run.assert_awaited_once_with(self.device)
         self.controller.ask_stats.assert_not_awaited()
         self.assertTrue(self.api.connected)
+
+    def test_recording_observes_immutable_packets_during_command_suppression(self):
+        """A stop packet reaches recording even while display updates are held."""
+        received = []
+        unsubscribe = self.api.register_snapshot_callback(received.append)
+        self.api._status_lock = True
+        status = SimpleNamespace(time=65, steps=101, speed=0, dist=10)
+        self.controller.handler_cur_status(None, status)
+        status.steps = 0
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].steps, 101)
+        self.assertEqual(received[0].distance_m, 100)
+        self.assertEqual(received[0].speed_mps, 0)
+        unsubscribe()
+        self.controller.handler_cur_status(None, status)
+        self.assertEqual(len(received), 1)
+
+    async def test_offline_device_can_be_resolved_after_startup(self):
+        """Saved devices keep identity and can reconnect when Bluetooth returns."""
+        resolver = Mock(return_value=None)
+        with patch.object(walking_pad, "Controller", return_value=self.controller):
+            api = walking_pad.WalkingPadApi(
+                "Desk treadmill", None, address=self.device.address, device_resolver=resolver
+            )
+        api._end_cmd = AsyncMock()
+        self.assertEqual(api.mac, self.device.address)
+        with self.assertRaises(ConnectionError):
+            await api.connect()
+        self.controller.run.assert_not_awaited()
+        resolver.return_value = self.device
+        await api.connect()
+        self.controller.run.assert_awaited_once_with(self.device)
+        self.assertTrue(api.connected)
 
     async def test_connection_failure_is_logged_at_debug(self):
         """An unavailable treadmill does not produce warning-level log spam."""
