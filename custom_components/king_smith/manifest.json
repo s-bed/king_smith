@@ -17,7 +17,7 @@
         }
     ],
     "codeowners": [
-        "@indiefan"
+        "@s-bed"
     ],
     "config_flow": true,
     "dependencies": [
@@ -25,9 +25,9 @@
         "frontend",
         "panel_custom"
     ],
-    "documentation": "https://github.com/indiefan/king_smith",
+    "documentation": "https://github.com/s-bed/king_smith",
     "iot_class": "local_polling",
-    "issue_tracker": "https://github.com/indiefan/king_smith/issues",
+    "issue_tracker": "https://github.com/s-bed/king_smith/issues",
     "requirements": [
         "bleak>=0.18.0",
         "ph4-walkingpad>=1.0.2",
