@@ -1,28 +1,57 @@
 name: "Release"
 
 on:
+  push:
+    branches:
+      - main
+      - dev
+      - "codex/**"
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
   release:
     types:
       - "published"
 
 permissions: {}
 
+concurrency:
+  group: king-smith-release
+  queue: max
+
 jobs:
   release:
     name: "Release"
+    if: github.event_name == 'release' || github.event.deleted == false
     runs-on: "ubuntu-latest"
     timeout-minutes: 10
     permissions:
       contents: write
-    env:
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
-      - name: "Checkout the repository"
+      - name: "Check out the source commit and release tags"
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: "Select the release tag"
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag=$(python .github/scripts/select_release_tag.py "$GITHUB_REF_NAME")
+          fi
+          if [[ -z "$tag" ]]; then
+            echo "This manifest version already has a release tag. Update the version and changelog for the next stable release."
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - name: "Build integration ZIP"
+        if: steps.version.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         shell: python
         run: |
           import json
@@ -46,8 +75,65 @@ jobs:
                   else:
                       archive.write(path, relative)
 
-      - name: "Upload the ZIP file to the release"
+      - name: "Create the tag and publish the ZIP and changelog"
+        if: steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/king_smith.zip" --clobber
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          commit=$(git rev-parse HEAD)
+          tag_ref="refs/tags/$RELEASE_TAG"
+          tagged_commit=$(git rev-parse --verify --quiet "$tag_ref^{commit}" || true)
+          if [[ -n "$tagged_commit" && "$tagged_commit" != "$commit" ]]; then
+            echo "Tag $RELEASE_TAG points to a different commit." >&2
+            exit 1
+          fi
+
+          archive="$RUNNER_TEMP/king_smith.zip"
+          current_notes="$RUNNER_TEMP/current-notes.md"
+          notes="$RUNNER_TEMP/release-notes.md"
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null) || draft=missing
+          if [[ "$draft" == false && "$GITHUB_EVENT_NAME" != release ]]; then
+            echo "Release $RELEASE_TAG is already published."
+            exit 0
+          fi
+          if [[ "$draft" == missing && "$GITHUB_EVENT_NAME" == release ]]; then
+            echo "Could not load the published release for $RELEASE_TAG." >&2
+            exit 1
+          fi
+          : > "$current_notes"
+          if [[ "$draft" != missing ]]; then
+            gh release view "$RELEASE_TAG" --json body --jq '.body // ""' > "$current_notes"
+          fi
+          python .github/scripts/release_notes.py "$RELEASE_TAG" "$current_notes" "$notes"
+          if [[ "$GITHUB_EVENT_NAME" != release && ! -s "$notes" ]]; then
+            echo "Add release notes for $RELEASE_TAG to CHANGELOG.md." >&2
+            exit 1
+          fi
+
+          if [[ -z "$tagged_commit" && "$GITHUB_REF_TYPE" == branch ]]; then
+            gh api --method POST "repos/$GH_REPO/git/refs" --silent \
+              -f ref="$tag_ref" -f sha="$commit"
+          fi
+
+          release_flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
+          case "$draft" in
+            missing)
+              gh release create "$RELEASE_TAG" "$archive" --verify-tag \
+                --title "King Smith $RELEASE_TAG" --notes-file "$notes" "${release_flags[@]}"
+              ;;
+            true)
+              gh release upload "$RELEASE_TAG" "$archive" --clobber
+              gh release edit "$RELEASE_TAG" --draft=false --notes-file "$notes" "${release_flags[@]}"
+              ;;
+            false)
+              gh release upload "$RELEASE_TAG" "$archive" --clobber
+              if ! cmp -s "$current_notes" "$notes"; then
+                gh release edit "$RELEASE_TAG" --notes-file "$notes"
+              fi
+              ;;
+          esac

@@ -55,9 +55,8 @@ class SessionPanelTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.hass = HomeAssistant(self.temporary.name)
         self.hass.config_entries = ConfigEntries(self.hass, {})
-        # A bare HomeAssistant has neither config entries nor loaded registries.
-        # Startup explicitly sets up the device registry before loading it;
-        # entity loading then waits for that device registry to be ready.
+        # Load the dependencies in startup order before exercising the panel.
+        await self.hass.config_entries.async_initialize()
         dr.async_setup(self.hass)
         await dr.async_load(self.hass)
         await er.async_load(self.hass)
@@ -205,14 +204,23 @@ class SessionPanelTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(connection.errors)
         self.assertEqual(connection.results[0][1]["garmin_accounts"], [
             {
-                "entity_id": "sensor.garmin_z_steps", "name": "First account", "available": True,
+                "entry_id": "account_one", "entity_id": "sensor.garmin_z_steps", "name": "First account", "available": True,
                 "entity_ids": ["sensor.garmin_a_unknown", "sensor.garmin_z_steps"],
             },
             {
-                "entity_id": "sensor.garmin_offline", "name": "Second account", "available": False,
+                "entry_id": "account_two", "entity_id": "sensor.garmin_offline", "name": "Second account", "available": False,
                 "entity_ids": ["sensor.garmin_offline"],
             },
         ])
+
+    async def test_detail_includes_the_walkingpads_configured_garmin_account(self):
+        """Supply the per-device account preference with the selected session."""
+        entry = SimpleNamespace(options={"garmin_account": "account_two"})
+        with patch.object(self.hass.config_entries, "async_get_entry", return_value=entry) as lookup:
+            connection = await self.dispatch("get", session_id=SESSION_ID)
+        lookup.assert_called_once_with(self.summary["entry_id"])
+        detail = connection.results[0][1]
+        self.assertEqual(detail["session"]["default_garmin_account"], "account_two")
 
     async def test_loaded_account_state_and_public_upload_service_are_reported_independently(self):
         """A sensor value alone does not imply an unloaded account can dispatch uploads."""

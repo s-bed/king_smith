@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Set a default Garmin Connect account and select a Companion App phone in each WalkingPad's settings. The session panel preselects that account and allows a different account for an individual session.
+- Approve uploads or keep walks locally from the built-in phone prompts. Choose a minimum walking duration for prompts. Pending sessions can be reviewed when notifications are enabled.
+- Include the version's changelog in GitHub release notes so HACS can show the changes in Home Assistant's update dialog.
+
 ## 0.1.3 - 2026-11-06
 
 Production release of the integration previously published as `0.1.3-dev.5`.

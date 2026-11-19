@@ -258,6 +258,9 @@ class KingSmithPanel extends HTMLElement {
     const selected = this._garminSelections[session.session_id];
     if (selected && this._garminAccounts.some((account) => account.entity_id === selected)) return selected;
     if (session.garmin_entity_id && this._garminAccounts.some((account) => account.entity_id === session.garmin_entity_id || account.entity_ids?.includes(session.garmin_entity_id))) return session.garmin_entity_id;
+    if (session.default_garmin_account) {
+      return this._garminAccounts.find((account) => account.entry_id === session.default_garmin_account)?.entity_id || "";
+    }
     return this._garminAccounts.length === 1 ? this._garminAccounts[0].entity_id : "";
   }
 

@@ -14,6 +14,23 @@
             "already_configured": "This Walking Pad is already configured."
         }
     },
+    "options": {
+        "step": {
+            "init": {
+                "title": "WalkingPad session review",
+                "data": {
+                    "garmin_account": "Default Garmin Connect account",
+                    "notification_device": "Phone for session review",
+                    "minimum_moving_seconds": "Minimum walking duration"
+                },
+                "data_description": {
+                    "garmin_account": "Preselect this account in WalkingPad sessions and use it for phone approvals.",
+                    "notification_device": "Choose a Home Assistant Companion App device for upload approval. Clear this field to turn off phone prompts.",
+                    "minimum_moving_seconds": "Send phone prompts for sessions at or above this moving time. Shorter sessions are still saved."
+                }
+            }
+        }
+    },
     "device_automation": {
         "trigger_type": {
             "session_start": "Session Started",

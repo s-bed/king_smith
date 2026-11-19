@@ -102,6 +102,11 @@ class SessionManager:
         """Return account-wide summaries for the administrator session browser."""
         return sorted([self._public_summary(s) for s in self.sessions.values()], key=lambda s: s["start_time"], reverse=True)
 
+    def get_summary(self, session_id: str) -> dict | None:
+        """Return the current review details for a saved session, if present."""
+        session = self.sessions.get(session_id)
+        return self._public_summary(session) if session else None
+
     @staticmethod
     def _public_summary(session: dict) -> dict:
         result = deepcopy(session)
