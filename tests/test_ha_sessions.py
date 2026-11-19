@@ -7,6 +7,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 
 
 HAS_HOME_ASSISTANT = (
@@ -114,6 +115,102 @@ class HomeAssistantSessionTests(unittest.IsolatedAsyncioTestCase):
         await self.manager.async_initialize()
         self.assertEqual(self.manager.list_sessions("a" * 32)[0]["status"], "discarded")
         remove_listener()
+
+    def _setup_phone_review(self, options):
+        from homeassistant.config_entries import ConfigEntries, ConfigEntryState
+        from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+        from custom_components.king_smith.session_notifications import SessionNotifications
+
+        self.hass.config_entries = ConfigEntries(self.hass, {})
+        settings = SimpleNamespace(entry_id="entry_one", disabled_by=None, options=options)
+        entries = {
+            "entry_one": settings,
+            "account_one": SimpleNamespace(domain="garmin_connect", title="Garmin A", state=ConfigEntryState.LOADED),
+            "phone_entry": SimpleNamespace(domain="mobile_app", data={"user_id": "phone_owner"}),
+        }
+        sensor = SimpleNamespace(entity_id="sensor.garmin_steps", platform="garmin_connect", disabled_by=None, config_entry_id="account_one")
+        devices = {"phone": SimpleNamespace(config_entries={"phone_entry"})}
+        notify = AsyncMock()
+        self.enterContext(patch.object(self.hass.config_entries, "async_get_entry", side_effect=entries.get))
+        self.enterContext(patch.object(er, "async_get", return_value=SimpleNamespace(entities={sensor.entity_id: sensor})))
+        self.enterContext(patch.object(dr, "async_get", return_value=SimpleNamespace(async_get=devices.get)))
+        self.enterContext(patch(
+            "custom_components.king_smith.session_notifications.async_get_device_automation_platform",
+            return_value=SimpleNamespace(async_call_action_from_config=notify),
+        ))
+        notifications = SessionNotifications(self.hass, self.manager)
+        notifications.async_listen()
+        return settings, notifications, notify
+
+    async def _tap_phone_prompt(self, action, user_id="phone_owner"):
+        from homeassistant.core import Context, EventOrigin
+
+        self.hass.bus.async_fire(
+            "mobile_app_notification_action", {"action": action}, EventOrigin.remote,
+            context=Context(user_id=user_id),
+        )
+        await self.hass.async_block_till_done()
+
+    async def test_configured_phone_approves_only_its_current_prompt(self):
+        """The options form preselects a destination and a phone tap queues it once."""
+        from custom_components.king_smith.config_flow import WalkingpadConfigFlow
+
+        settings, notifications, notify = self._setup_phone_review({})
+        flow = WalkingpadConfigFlow.async_get_options_flow(settings)
+        flow.hass = self.hass
+        flow.handler = settings.entry_id
+        form = await flow.async_step_init()
+        choices = {"garmin_account": "account_one", "notification_device": "phone", "minimum_moving_seconds": 0}
+        result = await flow.async_step_init(form["data_schema"](choices))
+        self.assertEqual(result["data"], choices)
+        settings.options = result["data"]
+
+        uploads = []
+
+        async def upload(call):
+            uploads.append(call.data["entity_id"])
+
+        self.hass.services.async_register("garmin_connect", "upload_activity", upload)
+        session = await self.record_session()
+        message = notify.await_args.args[1]
+        self.assertEqual(message["device_id"], "phone")
+        self.assertIn("Garmin A", message["message"])
+        action = message["data"]["actions"][0]["action"]
+        await self._tap_phone_prompt(action, "other_user")
+        self.assertEqual(uploads, [])
+
+        settings.options = {**choices, "garmin_account": "different_account"}
+        await self._tap_phone_prompt(action)
+        self.assertEqual(uploads, [])
+        await notifications.async_options_updated(self.hass, settings)
+        settings.options = choices
+        await notifications.async_options_updated(self.hass, settings)
+        await self._tap_phone_prompt(action)
+        self.assertEqual(uploads, [])
+        action = notify.await_args.args[1]["data"]["actions"][0]["action"]
+        await self._tap_phone_prompt(action)
+        await self.manager._worker_task
+        await self._tap_phone_prompt(action)
+        self.assertEqual(uploads, ["sensor.garmin_steps"])
+        self.assertEqual(self.manager.get_summary(session["session_id"])["status"], "sent")
+
+    async def test_lowering_review_threshold_can_restore_a_pending_walk(self):
+        """A newly eligible saved walk can be declined without removing its FIT file."""
+        settings, notifications, notify = self._setup_phone_review({
+            "notification_device": "phone", "minimum_moving_seconds": 3600,
+        })
+        session = await self.record_session()
+        notify.assert_not_awaited()
+        settings.options["minimum_moving_seconds"] = 0
+        await notifications.async_options_updated(self.hass, settings)
+        actions = notify.await_args.args[1]["data"]["actions"]
+        self.assertEqual([action["title"] for action in actions], ["Keep locally"])
+        await self._tap_phone_prompt(actions[0]["action"])
+        self.assertEqual(self.manager.get_summary(session["session_id"])["status"], "discarded")
+        self.assertEqual(notify.await_args.args[1]["message"], "clear_notification")
+        download = await self.manager.async_session_download(session["session_id"], "fit")
+        self.assertTrue(download["content"])
 
     async def test_real_garmin_service_receives_only_a_durably_approved_upload(self):
         """The disk ledger is uploading before the public Garmin service executes."""

@@ -51,3 +51,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/king_smith.zip" --clobber
+
+      - name: "Include the changelog in Home Assistant update notes"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$RELEASE_TAG" --json body --jq '.body // ""' > "$RUNNER_TEMP/current-notes.md"
+          python .github/scripts/release_notes.py "$RELEASE_TAG" "$RUNNER_TEMP/current-notes.md" "$RUNNER_TEMP/release-notes.md"
+          if ! cmp -s "$RUNNER_TEMP/current-notes.md" "$RUNNER_TEMP/release-notes.md"; then
+            gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi

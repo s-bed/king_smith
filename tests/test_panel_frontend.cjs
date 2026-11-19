@@ -168,6 +168,20 @@ function reviewPanel(options = {}) {
   return { panel, services, setSession: (updates) => { current = { ...current, ...updates }; } };
 }
 
+test("a configured default preselects Garmin without approving and can be overridden", async () => {
+  const { panel, services } = reviewPanel({ session: { default_garmin_account: "b" }, accounts: [
+    { entry_id: "a", entity_id: "sensor.account_a", name: "Garmin A", available: true },
+    { entry_id: "b", entity_id: "sensor.account_b", name: "Garmin B", available: true },
+  ] });
+  await panel._loadSessions(); await new Promise(setImmediate);
+  const selector = panel.shadowRoot.getElementById("garmin-account");
+  assert.equal(selector.children.find((option) => option.selected)?.value, "sensor.account_b");
+  assert.equal(services.length, 0);
+  selector.value = "sensor.account_a"; selector.events.change();
+  await panel._sessionAction("upload");
+  assert.equal(services[0][2].garmin_entity_id, "sensor.account_a");
+});
+
 test("web upload requires a selected account and a click, and duplicate clicks dispatch once", async () => {
   let release;
   const { panel, services } = reviewPanel({ accounts: [

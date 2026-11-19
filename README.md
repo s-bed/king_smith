@@ -57,7 +57,13 @@ Sessions include timestamps, moving/elapsed duration, distance, steps, speed and
 
 The **Recorder state** and **Pending sessions** sensors show recording and review progress. Saved sessions can be inspected using **Developer tools > Actions > King Smith: List saved WalkingPad sessions**. Supply the WalkingPad device; the response includes each session UUID, summary and status. The upload/discard actions use that UUID rather than accepting an arbitrary file path.
 
-### Install the phone review blueprint
+### Configure Garmin and phone review
+
+Starting with **0.1.4**, open **Settings → Devices & services → King Smith Walking Pad → Configure** for your WalkingPad. Choose a **Default Garmin Connect account** to preselect in the session panel. Choose a **Phone for session review** to enable Companion App prompts. You can adjust the minimum walking time, which defaults to 60 seconds.
+
+After a qualifying walk is saved, tap **Upload to Garmin** or **Keep locally**. Pending walks can also prompt you when you enable phone review or restart Home Assistant. If an upload result is uncertain, check Garmin and retry from **WalkingPad sessions**. To receive one prompt per walk, disable the corresponding blueprint automation when switching to built-in phone review.
+
+### Phone review blueprint
 
 HACS installs the integration files. Import this blueprint separately after updating and restarting Home Assistant:
 

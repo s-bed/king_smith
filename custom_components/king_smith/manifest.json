@@ -1,6 +1,7 @@
 {
     "domain": "king_smith",
     "name": "King Smith Walking Pad",
+    "after_dependencies": ["mobile_app"],
     "bluetooth": [
         {
             "local_name": "KS-BL*"
@@ -33,5 +34,5 @@
         "garmin-fit-sdk==21.221.0",
         "voluptuous>=0.13.1"
     ],
-    "version": "0.1.3"
+    "version": "0.1.4"
 }

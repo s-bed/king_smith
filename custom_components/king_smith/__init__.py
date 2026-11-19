@@ -15,6 +15,7 @@ from .const import DOMAIN
 from .coordinator import WalkingPadCoordinator
 from .walking_pad import WalkingPadApi
 from .session_manager import SessionManager
+from .session_notifications import SessionNotifications
 from .session_services import register_session_services
 from .session_panel import async_setup_panel
 
@@ -49,6 +50,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     register_session_services(hass, manager)
     await manager.async_initialize()
     await async_setup_panel(hass, manager)
+    notifications = SessionNotifications(hass, manager)
+    hass.data[DOMAIN]["session_notifications"] = notifications
+    notifications.async_listen()
     cancel_tick = async_track_time_interval(hass, manager.async_tick, timedelta(seconds=5))
 
     async def shutdown(_event):
@@ -100,6 +104,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "remove_snapshot": remove_snapshot,
     }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    notifications = hass.data[DOMAIN]["session_notifications"]
+    entry.async_on_unload(entry.add_update_listener(notifications.async_options_updated))
 
     return True
 

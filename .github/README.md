@@ -8,5 +8,8 @@ runs on the same branch are cancelled.
 `Release` runs when a GitHub release or prerelease is published. It packages
 the tagged integration as `king_smith.zip`, sets the packaged manifest version
 from the tag (without an optional leading `v`), and attaches the ZIP to that
-release. Re-running the workflow replaces the existing ZIP. It does not modify
-the repository's manifest or publish a new release.
+release. It also includes the matching section of `CHANGELOG.md` in the GitHub
+release body so HACS can display the changes in Home Assistant's update dialog.
+Use a heading such as `## 0.1.4` or `## 0.1.4 - YYYY-MM-DD`. Prereleases use
+their own section when present and otherwise use the stable version's section.
+Re-running the workflow replaces the ZIP and preserves existing release text.
