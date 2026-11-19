@@ -8,7 +8,7 @@
 [![BuyMeCoffee][buymecoffeebadge]][buymecoffee]
 
 
-Custom integration to connect Home Assistant with [King Smith Walking Pads][king_smith].
+The [s-bed King Smith integration][king_smith] connects Home Assistant to King Smith WalkingPads.
 
 This integration adds a belt switch, a speed control, walking sensors, and a persistent session recorder. Speed and distance use metric native units and Home Assistant can display them in your preferred units.
 
@@ -37,11 +37,11 @@ If you see `not_implemented` when adding the integration, update the files in `c
 
 ## Production release in HACS
 
-The production release of this fork is **0.1.3**, published from `main`. It includes the session recorder, Garmin review notifications, and the native session panel described below. HACS lists published releases, not arbitrary branches.
+The [latest stable release][stable-release] is published from this fork's `main` branch. It includes the session recorder, Garmin review notifications, and the native session panel described below.
 
-1. Add `https://github.com/s-bed/king_smith` as a custom repository in HACS with the **Integration** category if it is not already added. Make sure you are downloading this fork rather than `indiefan/king_smith`.
+1. Add `https://github.com/s-bed/king_smith` as a custom repository in HACS with the **Integration** category if it is not already added.
 1. Open **King Smith** in HACS, open its menu, and refresh its information.
-1. Choose **Redownload** and select **0.1.3**. Beta versions are not required for this production release.
+1. Choose **Redownload** and select the latest stable release.
 1. Download it and restart Home Assistant.
 1. Go to **Settings > Devices & services > Add integration > King Smith Walking Pad** to configure it.
 
@@ -118,14 +118,15 @@ If you want to contribute to this please read the [Contribution guidelines](CONT
 
 ***
 
-[king_smith]: https://github.com/ludeeus/integration_blueprint
+[king_smith]: https://github.com/s-bed/king_smith
 [buymecoffee]: https://www.buymeacoffee.com/indiefan
 [buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-yellow.svg?style=for-the-badge
-[commits-shield]: https://img.shields.io/github/commit-activity/y/indiefan/king_smith.svg?style=for-the-badge
-[commits]: https://github.com/indiefan/king_smith/commits/main
+[commits-shield]: https://img.shields.io/github/commit-activity/y/s-bed/king_smith.svg?style=for-the-badge
+[commits]: https://github.com/s-bed/king_smith/commits/main
 [exampleimg]: example.png
 [forum-shield]: https://img.shields.io/badge/community-forum-brightgreen.svg?style=for-the-badge
 [forum]: https://community.home-assistant.io/
-[license-shield]: https://img.shields.io/github/license/indiefan/king_smith.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/s-bed/king_smith.svg?style=for-the-badge
 [releases-shield]: https://img.shields.io/github/release/s-bed/king_smith.svg?style=for-the-badge
 [releases]: https://github.com/s-bed/king_smith/releases
+[stable-release]: https://github.com/s-bed/king_smith/releases/latest
