@@ -45,7 +45,7 @@ The production release of this fork is **0.1.3**, published from `main`. It incl
 1. Download it and restart Home Assistant.
 1. Go to **Settings > Devices & services > Add integration > King Smith Walking Pad** to configure it.
 
-Development builds are published separately as GitHub prereleases from `dev`; enable **Show beta versions** only if you want those builds. When publishing another development build, use a new prerelease version in `manifest.json` and publish a GitHub prerelease with that same tag from the development branch. A branch or tag alone does not make a selectable HACS release. The blueprint import and update links below follow production `main`.
+Pushes to `dev` and branches under `codex/` automatically publish numbered GitHub prereleases for the manifest version. Enable **Show beta versions** in HACS to see those builds. To publish a new stable version, update `manifest.json` and add the matching section in `CHANGELOG.md`. The release is published when those changes reach `main`. The blueprint import and update links below follow production `main`.
 
 The `0.1.3-dev.2` build includes the [six changes from Hypfer's fork](https://github.com/Hypfer/king_smith/compare/7e01359fdaed684dbc768678a591c845b67cf61d...a299c3ccbb76c814a335f29140b59dc32188d124): cadence averaged over the last ten readings, R1 Pro Bluetooth discovery, `ph4-walkingpad>=1.0.2`, one shared command lock, polling every five seconds through the coordinator, and quieter offline/disconnection handling. It also includes the sensor docstring fixes and explicit HACS branch/download settings from those commits. Manual setup remains available.
 
